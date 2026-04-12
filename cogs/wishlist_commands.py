@@ -187,9 +187,10 @@ class WishlistCommandsCog(commands.Cog):
                 # Add type and status
                 content_emoji = "📺" if content_type == "tvSeries" else "🎬"
                 status = "✅ In Wishlist" if already_in_wishlist else "Ready to add"
+                rating_str = f"⭐ {result.get('rating')}" if result.get("rating") else "⭐ Not rated"
                 result_embed.add_field(
                     name="Info",
-                    value=f"{content_emoji} Type: {'TV Series' if content_type == 'tvSeries' else 'Movie'}\n{status}",
+                    value=f"{content_emoji} Type: {'TV Series' if content_type == 'tvSeries' else 'Movie'}\n{rating_str}\n{status}",
                     inline=False
                 )
 
