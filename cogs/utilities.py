@@ -123,6 +123,15 @@ class UtilitiesCog(commands.Cog):
         )
 
         embed.add_field(
+            name="🔧 Admin (Brandon Only)",
+            value="**/health** - Check bot status (database, imports, uptime)\n"
+                  "**/scrape-show** - Scrape TV show details from IMDb\n"
+                  "**/scrape-movie** - Scrape movie details from IMDb\n"
+                  "_Note: Morgan can only suggest via wishlist_",
+            inline=False
+        )
+
+        embed.add_field(
             name="💡 How It Works",
             value="**Option 1: Wishlist Mode**\n"
                   "1. `/search breaking bad` to find shows in database\n"
