@@ -490,7 +490,7 @@ class DatabaseBridge:
                 conn.close()
 
     @staticmethod
-    def add_to_wishlist(title_id: str, title_name: str, content_type: str, added_by: str) -> bool:
+    def add_to_wishlist(title_id: str, title_name: str, content_type: str, added_by: str, aggregate_rating: float = None) -> bool:
         """
         Add a title to the wishlist.
 
@@ -499,6 +499,7 @@ class DatabaseBridge:
             title_name: Title name
             content_type: 'tvSeries' or 'movie'
             added_by: Username (Brandon or Morgan)
+            aggregate_rating: Optional IMDb rating (populated from search)
 
         Returns:
             True if added, False if already in wishlist
@@ -514,11 +515,11 @@ class DatabaseBridge:
                 if cur.fetchone()[0] > 0:
                     return False
 
-                # Add to wishlist
+                # Add to wishlist with optional rating
                 cur.execute("""
-                    INSERT INTO wishlist (title_id, title_name, content_type, added_by)
-                    VALUES (%s, %s, %s, %s)
-                """, (title_id, title_name, content_type, added_by))
+                    INSERT INTO wishlist (title_id, title_name, content_type, added_by, aggregate_rating)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (title_id, title_name, content_type, added_by, aggregate_rating))
 
                 conn.commit()
                 return True
@@ -541,7 +542,7 @@ class DatabaseBridge:
             conn = DatabaseBridge.get_connection()
             with conn.cursor() as cur:
                 cur.execute("""
-                    SELECT wishlist_id, title_id, title_name, content_type, added_by, added_at
+                    SELECT wishlist_id, title_id, title_name, content_type, added_by, added_at, aggregate_rating
                     FROM wishlist
                     ORDER BY added_at DESC
                 """)
@@ -553,7 +554,8 @@ class DatabaseBridge:
                         "title": row[2],
                         "content_type": row[3],
                         "added_by": row[4],
-                        "added_at": row[5]
+                        "added_at": row[5],
+                        "rating": row[6]
                     }
                     for row in rows
                 ]
@@ -587,6 +589,34 @@ class DatabaseBridge:
                 return cur.rowcount > 0
         except Error as e:
             logger.error(f"Error removing from wishlist: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def update_wishlist_rating(title_id: str, aggregate_rating: float) -> bool:
+        """
+        Update the aggregate rating for a wishlist item (called after scraping).
+
+        Args:
+            title_id: IMDb ID
+            aggregate_rating: The rating to store
+
+        Returns:
+            True if updated, False otherwise
+        """
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE wishlist SET aggregate_rating = %s WHERE title_id = %s",
+                    (aggregate_rating, title_id)
+                )
+                conn.commit()
+                return cur.rowcount > 0
+        except Error as e:
+            logger.error(f"Error updating wishlist rating: {e}")
             return False
         finally:
             if conn:

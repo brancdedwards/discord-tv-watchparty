@@ -225,7 +225,8 @@ class WishlistCommandsCog(commands.Cog):
                         return
 
                     user_name_btn = self.get_user_name(btn_interaction.user.id)
-                    success = self.db.add_to_wishlist(imdb_id_sel, title_sel, content_type_sel, user_name_btn)
+                    rating_val = result_data.get("rating")
+                    success = self.db.add_to_wishlist(imdb_id_sel, title_sel, content_type_sel, user_name_btn, rating_val)
 
                     if success:
                         self.db.add_to_queue(title_sel, content_type_sel, imdb_id_sel)
