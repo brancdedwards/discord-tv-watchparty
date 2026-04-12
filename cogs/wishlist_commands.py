@@ -17,32 +17,14 @@ PARENT_DIR = SCRIPT_DIR.parent  # GitHub/Data Science projects/
 # Add discord-tv-watchparty to path for local imports
 sys.path.insert(0, str(SCRIPT_DIR))
 
-# Add review_analyzer to path for its imports
-REVIEW_ANALYZER_PATH = PARENT_DIR / "review_analyzer"
-if REVIEW_ANALYZER_PATH.exists():
-    sys.path.insert(0, str(REVIEW_ANALYZER_PATH))
-    logger.info(f"Added review_analyzer to path: {REVIEW_ANALYZER_PATH}")
-
 # Import local utilities
 from utils.db_bridge import DatabaseBridge
 from utils.embed_formatter import EmbedFormatter
+from utils.imdb_search import search_imdb_paginated
 from views.scrape_buttons import PaginationView
 from config import USERS
 
-# Import IMDb search (use paginated version for more results)
-search_imdb_paginated = None
-try:
-    from imdb_scraper_project.utils.imdb_search import search_imdb_paginated
-    logger.info("Successfully imported search_imdb_paginated from review_analyzer")
-except ImportError as e:
-    logger.warning(f"Failed to import search_imdb_paginated: {e}")
-    # Fallback to graphql search if paginated not available
-    try:
-        from imdb_scraper_project.utils.imdb_search import search_imdb_graphql
-        search_imdb_paginated = search_imdb_graphql
-        logger.info("Falling back to search_imdb_graphql")
-    except ImportError as e2:
-        logger.warning(f"Failed to import imdb_search: {e2}")
+logger.info("Successfully imported search_imdb_paginated from local utils")
 
 
 class WishlistCommandsCog(commands.Cog):
