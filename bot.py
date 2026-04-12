@@ -3,6 +3,7 @@ from discord.ext import commands
 import asyncio
 import os
 import logging
+import time
 from config import (
     DISCORD_TOKEN,
     BOT_INTENTS,
@@ -26,6 +27,7 @@ class ReviewBot(commands.Bot):
             help_command=None
         )
         self.active_tasks = set()
+        self.start_time = time.time()
         logger.info("ReviewBot initialized")
 
     async def setup_hook(self):

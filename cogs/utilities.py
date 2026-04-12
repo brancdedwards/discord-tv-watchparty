@@ -217,6 +217,76 @@ class UtilitiesCog(commands.Cog):
                 ephemeral=True
             )
 
+    @app_commands.command(
+        name="health",
+        description="Check bot health status (database, imports, uptime)"
+    )
+    async def health_check(self, interaction: discord.Interaction):
+        """
+        Check bot health status.
+        """
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            import time
+            from datetime import datetime, timedelta
+
+            health_status = {
+                "database": False,
+                "imports": False,
+                "bot_uptime": "Unknown",
+                "timestamp": datetime.now().isoformat()
+            }
+
+            # Check database connection
+            try:
+                self.db.get_wishlist()
+                health_status["database"] = True
+            except Exception as e:
+                logger.warning(f"Database health check failed: {e}")
+
+            # Check critical imports
+            try:
+                from cogs.wishlist_commands import search_imdb_paginated
+                health_status["imports"] = search_imdb_paginated is not None
+            except:
+                health_status["imports"] = False
+
+            # Get bot uptime (approximate)
+            try:
+                uptime_seconds = int(time.time() - self.bot.start_time)
+                hours = uptime_seconds // 3600
+                minutes = (uptime_seconds % 3600) // 60
+                health_status["bot_uptime"] = f"{hours}h {minutes}m"
+            except:
+                pass
+
+            # Build response embed
+            db_status = "✅ Connected" if health_status["database"] else "❌ Failed"
+            imports_status = "✅ Available" if health_status["imports"] else "⚠️ Missing (IMDb search unavailable)"
+
+            embed = discord.Embed(
+                title="🏥 Bot Health Check",
+                color=discord.Color.green() if health_status["database"] else discord.Color.red(),
+                timestamp=datetime.fromisoformat(health_status["timestamp"])
+            )
+
+            embed.add_field(name="Database", value=db_status, inline=False)
+            embed.add_field(name="Critical Imports", value=imports_status, inline=False)
+            embed.add_field(name="Uptime", value=health_status["bot_uptime"], inline=False)
+            embed.add_field(name="Status",
+                          value="🟢 Healthy" if health_status["database"] else "🔴 Unhealthy",
+                          inline=False)
+
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"Error in health_check: {e}")
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error(f"Health check error: {str(e)[:100]}"),
+                ephemeral=True
+            )
+
 
 class RandomShowView(discord.ui.View):
     """View for random show with 'try another' button."""
