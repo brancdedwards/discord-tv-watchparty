@@ -158,7 +158,7 @@ def search_imdb_graphql(
     }
 
     session, using_curl = _get_session()
-    response = session.get(_GRAPHQL_URL, params=params, headers=_GRAPHQL_HEADERS, timeout=10)
+    response = session.get(_GRAPHQL_URL, params=params, headers=_GRAPHQL_HEADERS, timeout=8)
     response.raise_for_status()
     data = response.json()
 
@@ -193,7 +193,7 @@ def _search_imdb_autocomplete(query: str, content_type: str = "all") -> List[Dic
     url = f"https://sg.media-imdb.com/suggests/{first_char}/{query_clean}.json"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    response = requests.get(url, headers=headers, timeout=10)
+    response = requests.get(url, headers=headers, timeout=5)
     response.raise_for_status()
 
     text = response.text

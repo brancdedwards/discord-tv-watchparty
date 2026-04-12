@@ -6,6 +6,7 @@ from discord.ext import commands
 from discord import app_commands
 import logging
 import sys
+import asyncio
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -72,9 +73,22 @@ class WishlistCommandsCog(commands.Cog):
             results = []
 
             try:
-                search_results = search_imdb_paginated(title, max_results=25)
+                # Run search with 15-second timeout to prevent hanging
+                loop = asyncio.get_event_loop()
+                search_results = await asyncio.wait_for(
+                    loop.run_in_executor(None, search_imdb_paginated, title, "all", 25),
+                    timeout=15.0
+                )
                 if search_results:
                     results.extend(search_results)
+            except asyncio.TimeoutError:
+                await interaction.followup.send(
+                    embed=EmbedFormatter.format_error(
+                        "Search timed out. IMDb is responding slowly. Try again in a moment."
+                    ),
+                    ephemeral=True
+                )
+                return
             except Exception as e:
                 logger.warning(f"IMDb search failed: {e}")
 
