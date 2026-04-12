@@ -421,6 +421,9 @@ class TVCommandsCog(commands.Cog):
                             )
                             await status_message.edit(embed=final_embed)
                             self.db.update_queue_item(queue_id, status="completed")
+                            # Update wishlist rating if in wishlist
+                            if series_data.get("rating"):
+                                self.db.update_wishlist_rating(imdb_id, series_data["rating"])
                         else:
                             error_embed = EmbedFormatter.format_error("Scrape completed but data not found")
                             await status_message.edit(embed=error_embed)
