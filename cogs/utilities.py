@@ -100,49 +100,36 @@ class UtilitiesCog(commands.Cog):
         )
 
         embed.add_field(
-            name="📺 TV Shows",
-            value="**/add-show** - Add TV show to scrape queue\n"
-                  "**/pending-shows** - View shows waiting to be scraped\n"
-                  "**/scrape-show** - Fetch full details from IMDb",
-            inline=False
-        )
-
-        embed.add_field(
-            name="🎬 Movies",
-            value="**/add-movie** - Add movie to scrape queue\n"
-                  "**/pending-movies** - View movies waiting to be scraped\n"
-                  "**/scrape-movie** - Fetch full details from IMDb",
-            inline=False
-        )
-
-        embed.add_field(
             name="🎲 Fun",
-            value="**/random-show** - Get a random show suggestion\n"
-                  "**/help** - Show this help message",
+            value="**/random-show** - Get a random show suggestion",
             inline=False
         )
 
         embed.add_field(
             name="🔧 Admin (Brandon Only)",
-            value="**/health** - Check bot status (database, imports, uptime)\n"
-                  "**/scrape-show** - Scrape TV show details from IMDb\n"
-                  "**/scrape-movie** - Scrape movie details from IMDb\n"
-                  "_Note: Morgan can only suggest via wishlist_",
+            value="**📺 TV Shows**\n"
+                  "  **/add-show** - Add TV show to scrape queue\n"
+                  "  **/pending-shows** - View shows waiting to be scraped\n"
+                  "  **/scrape-show** - Fetch full details from IMDb\n\n"
+                  "**🎬 Movies**\n"
+                  "  **/add-movie** - Add movie to scrape queue\n"
+                  "  **/pending-movies** - View movies waiting to be scraped\n"
+                  "  **/scrape-movie** - Fetch full details from IMDb\n\n"
+                  "**🏥 Status**\n"
+                  "  **/health** - Check bot status (database, imports, uptime)",
             inline=False
         )
 
         embed.add_field(
             name="💡 How It Works",
-            value="**Option 1: Wishlist Mode**\n"
-                  "1. `/search breaking bad` to find shows in database\n"
-                  "2. `/add-to-wishlist` to add to shared wishlist\n"
-                  "3. `/wishlist` to see all suggestions\n"
-                  "4. Decide together what to watch!\n\n"
-                  "**Option 2: Scrape Mode**\n"
-                  "1. `/add-show` to queue a show for scraping\n"
-                  "2. `/scrape-show` to fetch full IMDb details\n"
-                  "3. Review rating, genres, season ratings\n"
-                  "4. Then add to wishlist if interested!",
+            value="**Suggest Content (Both Users)**\n"
+                  "1. `/search breaking bad` or `/list-shows` to find content\n"
+                  "2. `/add-to-wishlist` to suggest to each other\n"
+                  "3. `/wishlist` to see all ideas together\n\n"
+                  "**Scrape Details (Brandon)**\n"
+                  "1. `/add-show` or `/add-movie` to queue new content\n"
+                  "2. `/scrape-show` or `/scrape-movie` to fetch IMDb details\n"
+                  "3. Then suggest via `/add-to-wishlist` if you like it!",
             inline=False
         )
 
