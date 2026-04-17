@@ -303,19 +303,11 @@ class WishlistCommandsCog(commands.Cog):
         # Show first page
         await show_page(1)
 
-    @app_commands.command(
-        name="wishlist",
-        description="View the shared wishlist"
-    )
-    @app_commands.describe(
-        page="Page number (1-based)"
-    )
-    async def view_wishlist(self, interaction: discord.Interaction, page: int = 1):
+    async def _show_wishlist_page(self, interaction: discord.Interaction, page: int = 1):
         """
-        View the shared wishlist with pagination.
+        Internal method to display a wishlist page.
+        Called by both the command and pagination buttons.
         """
-        await interaction.response.defer()
-
         try:
             items = self.db.get_wishlist()
 
@@ -362,7 +354,7 @@ class WishlistCommandsCog(commands.Cog):
                 async def page_callback(btn_interaction: discord.Interaction, new_offset: int):
                     await btn_interaction.response.defer()
                     new_page = (new_offset // page_size) + 1
-                    await self.view_wishlist(btn_interaction, page=new_page)
+                    await self._show_wishlist_page(btn_interaction, page=new_page)
 
                 view = PaginationView(page_callback, total, page_size)
                 await interaction.followup.send(embed=embed, view=view)
@@ -370,11 +362,25 @@ class WishlistCommandsCog(commands.Cog):
                 await interaction.followup.send(embed=embed)
 
         except Exception as e:
-            logger.error(f"Error in view_wishlist: {e}")
+            logger.error(f"Error in _show_wishlist_page: {e}")
             await interaction.followup.send(
                 embed=EmbedFormatter.format_error(f"Error: {str(e)[:100]}"),
                 ephemeral=True
             )
+
+    @app_commands.command(
+        name="wishlist",
+        description="View the shared wishlist"
+    )
+    @app_commands.describe(
+        page="Page number (1-based)"
+    )
+    async def view_wishlist(self, interaction: discord.Interaction, page: int = 1):
+        """
+        View the shared wishlist with pagination.
+        """
+        await interaction.response.defer()
+        await self._show_wishlist_page(interaction, page=page)
 
     @app_commands.command(
         name="remove-from-wishlist",
