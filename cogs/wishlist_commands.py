@@ -357,7 +357,8 @@ class WishlistCommandsCog(commands.Cog):
                     logger.info(f"Pagination: offset={new_offset}, page_size={page_size}, new_page={new_page}, total_pages={total_pages}")
                     await self._show_wishlist_page(btn_interaction, page=new_page)
 
-                view = PaginationView(page_callback, total, page_size)
+                current_offset = (page - 1) * page_size
+                view = PaginationView(page_callback, total, page_size, current_offset=current_offset)
                 await interaction.followup.send(embed=embed, view=view)
             else:
                 await interaction.followup.send(embed=embed)

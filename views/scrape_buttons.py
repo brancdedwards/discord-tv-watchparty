@@ -116,7 +116,7 @@ class PaginationView(View):
     View for paginated list navigation.
     """
 
-    def __init__(self, callback, total: int, page_size: int = 10, timeout: int = 300):
+    def __init__(self, callback, total: int, page_size: int = 10, current_offset: int = 0, timeout: int = 300):
         """
         Initialize pagination view.
 
@@ -124,13 +124,14 @@ class PaginationView(View):
             callback: Async callback function(interaction, offset)
             total: Total number of items
             page_size: Items per page
+            current_offset: Current page offset (for multi-page navigation)
             timeout: How long buttons are active
         """
         super().__init__(timeout=timeout)
         self.callback = callback
         self.total = total
         self.page_size = page_size
-        self.current_offset = 0
+        self.current_offset = current_offset
         self.max_page = (total + page_size - 1) // page_size
 
     @discord.ui.button(label="◀ Previous", style=discord.ButtonStyle.primary)
