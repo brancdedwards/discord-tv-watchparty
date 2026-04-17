@@ -354,6 +354,7 @@ class WishlistCommandsCog(commands.Cog):
                 async def page_callback(btn_interaction: discord.Interaction, new_offset: int):
                     await btn_interaction.response.defer()
                     new_page = (new_offset // page_size) + 1
+                    logger.info(f"Pagination: offset={new_offset}, page_size={page_size}, new_page={new_page}, total_pages={total_pages}")
                     await self._show_wishlist_page(btn_interaction, page=new_page)
 
                 view = PaginationView(page_callback, total, page_size)
