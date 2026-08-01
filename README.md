@@ -4,11 +4,12 @@ A Discord bot for you and Morgan to collaboratively pick TV shows and movies to 
 
 ## Features
 
-- 🔍 **Search IMDb** — Find TV shows and movies with `/add-show` and `/add-movie`
+- 🧭 **Pinned Watchparty Panel** — Post one button menu with `/watchparty-panel`, then pin it
+- 🔍 **Search IMDb** — Search from a button modal and add with one click, including ratings and genres
 - 📊 **View Metadata** — Get ratings, genres, episode counts, and season-by-season ratings
-- 🎬 **One-Click Scraping** — Trigger IMDb scrapes directly from Discord
+- 🛠️ **Admin Maintenance** — Keep detailed metadata refreshed without exposing the technical flow
 - 📺 **Separate Channels** — Organize TV shows and movies in different channels
-- 🎲 **Random Suggestions** — Get random show ideas with `/random-show`
+- 🎲 **Pick Tonight** — Pick from the shared list by Movie, TV, Anything, and available genres
 
 ## Setup
 
@@ -68,31 +69,50 @@ The bot will sync slash commands with Discord on startup and log successful init
 
 ## Usage
 
-### TV Shows
+### Easiest Flow for Morgan
 
-**Add a show:**
-```
-/add-show Breaking Bad
-```
-The bot returns 5 search results. Click a button to select which show you meant.
+Run this once in the Discord channel. The bot will try to pin the message automatically if it has permission:
 
-**Get show details:**
 ```
-/scrape-show tt0903747
+/watchparty-panel
 ```
-or
+
+The pinned panel gives everyone six buttons:
+
+- **Suggest Movie** — opens a text box and searches movie results only.
+- **Suggest TV** — opens a text box and searches TV results only.
+- **Suggest Anything** — searches both movies and TV shows.
+- **See Wishlist** — shows the shared list without needing to type a command.
+- **Pick Tonight** — choose Movie, TV, or Anything, then pick a genre or let the bot surprise you.
+- **Remove Idea** — opens a text box to remove an item by title.
+
+This keeps Morgan out of IMDb IDs, queue language, and scraper commands.
+
+Search results show the content type, release year, IMDb rating when available, genres when available, and a poster. If IMDb search cannot provide a rating, the bot says "Rating unavailable" rather than implying the title itself is unrated.
+
+### Fallback Commands
+
+These still work if you prefer typing:
+
+```
+/add-to-wishlist Breaking Bad
+/wishlist
+/random-show
+```
+
+### Brandon/Admin Scraping
+
+Maintenance commands are still available for Brandon/admin use:
+
 ```
 /scrape-show Breaking Bad
+/scrape-movie tt0133093
 ```
 
 The bot will:
-1. Check if the show is already in the database (instant return if cached)
-2. If not, spawn the review_analyzer scraper (5-15 min)
-3. Return an embed with: rating, genres, seasons, top-rated seasons
-
-### Movies
-
-Same pattern with `/add-movie` and `/scrape-movie`
+1. Check if the title is already in the database
+2. If not, spawn the review_analyzer scraper
+3. Return an embed with rating, genres, seasons, and top-rated seasons when available
 
 ### Random Suggestions
 
@@ -100,7 +120,25 @@ Same pattern with `/add-movie` and `/scrape-movie`
 /random-show
 ```
 
-Get a random show from the database. Click "Try Another" to get a different one.
+Get a random detailed show from the scraped database. From the watchparty panel, **Pick Tonight** chooses from the shared wishlist instead.
+
+### Pick Tonight
+
+The panel's **Pick Tonight** button walks through:
+
+1. Movie, TV Show, or Anything
+2. Genre or Surprise Me
+3. A random pick from the matching shared wishlist ideas
+
+Genre buttons appear when matching wishlist items already have scraped genre metadata. If no genres are available yet, **Surprise Me** still picks from the selected Movie/TV/Anything set.
+
+### Health Check
+
+```
+/health
+```
+
+Admin-only. Checks the database, critical imports, bot uptime, and whether IMDb GraphQL search is returning ratings. This helps catch IMDb endpoint/query changes before Morgan sees broken search results.
 
 ---
 
@@ -129,7 +167,14 @@ discord-tv-watchparty/          [This bot]
 
 ## How Scraping Works
 
-1. User requests `/scrape-show Breaking Bad`
+1. Someone suggests a title from the watchparty panel
+2. The selected IMDb result is added to the shared wishlist and scrape queue
+3. Brandon can process the queue with scraper commands
+4. Data is cached, so future requests are instant
+
+Manual scraper flow:
+
+1. Brandon requests `/scrape-show Breaking Bad`
 2. Bot checks if "Breaking Bad" is in the database
 3. If not:
    - Bot spawns: `python review_analyzer/imdb_scraper_project/run_scraper.py tt0903747 --yes`
@@ -184,6 +229,21 @@ AUTHORIZED_SCRAPERS = [123456789, 987654321]  # Their Discord user IDs
 1. Verify `.env` has correct DB credentials
 2. Test connection: `psql -h HOST -U USER -d DB_NAME`
 3. Make sure review_analyzer database is running
+
+### Search works but ratings disappear
+
+1. Run `/health` and check the **IMDb Search** line.
+2. If it says "Search fallback only", IMDb changed or blocked the GraphQL path.
+3. Check logs for `GraphQL search ... returned errors`.
+4. The current rich search path lives in `utils/imdb_search.py` and uses a direct `FindPageSearch` POST to `https://api.graphql.imdb.com/`.
+5. The autocomplete fallback may still return titles, posters, years, and cast summaries, but it does not include ratings.
+
+### Render deployment
+
+1. Commit local changes.
+2. Push to the branch Render deploys from.
+3. Restart or redeploy the Render service so the running bot process loads the new code.
+4. Watch startup logs for command sync and run `/health` after deploy.
 
 ### Scraper times out
 

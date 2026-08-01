@@ -7,6 +7,7 @@ from discord import app_commands
 import logging
 import random
 import sys
+import asyncio
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -79,38 +80,30 @@ class UtilitiesCog(commands.Cog):
         """
         embed = discord.Embed(
             title="🎬 TV & Movie Watchparty Bot",
-            description="Commands to help Brandon and Morgan pick shows to watch together!",
+            description="Use the watchparty panel for the easiest button-based flow.",
             color=discord.Color.gold()
         )
 
         embed.add_field(
-            name="💕 Wishlist (Shared Ideas)",
-            value="**/add-to-wishlist** - Add a show/movie to your shared wishlist\n"
-                  "**/wishlist** - View the shared wishlist (shows who suggested what)\n"
-                  "**/remove-from-wishlist** - Remove from wishlist",
+            name="Best Way",
+            value="**/watchparty-panel** - Post the button panel, then pin it in the channel",
             inline=False
         )
 
         embed.add_field(
-            name="🔍 Search & Browse",
-            value="**/search** - Search the database for shows/movies\n"
-                  "**/list-shows** - Browse all TV shows (paginated)\n"
-                  "**/list-movies** - Browse all movies (paginated)",
+            name="Panel Buttons",
+            value="**Suggest Movie** - Search movies only\n"
+                  "**Suggest TV** - Search TV shows only\n"
+                  "**Suggest Anything** - Search both movies and TV\n"
+                  "**See Wishlist** - Browse shared ideas\n"
+                  "**Pick Tonight** - Choose Movie, TV, Anything, then genre or surprise\n"
+                  "**Remove Idea** - Remove by title",
             inline=False
         )
 
         embed.add_field(
-            name="🎲 Fun",
-            value="**/random-show** - Get a random show suggestion",
-            inline=False
-        )
-
-        embed.add_field(
-            name="💡 How It Works",
-            value="1. `/search breaking bad` or `/list-shows` to find content\n"
-                  "2. `/add-to-wishlist` to suggest to each other\n"
-                  "3. `/wishlist` to see all ideas together\n"
-                  "4. Decide what to watch!",
+            name="Fallback Commands",
+            value="**/add-to-wishlist**, **/wishlist**, and **/random-show** still work if you need them.",
             inline=False
         )
 
@@ -122,6 +115,7 @@ class UtilitiesCog(commands.Cog):
         name="search",
         description="Search for a show or movie in the database"
     )
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(query="Title to search for")
     async def search(self, interaction: discord.Interaction, query: str):
         """
@@ -198,6 +192,7 @@ class UtilitiesCog(commands.Cog):
         name="health",
         description="Check bot health status (database, imports, uptime)"
     )
+    @app_commands.default_permissions(manage_guild=True)
     async def health_check(self, interaction: discord.Interaction):
         """
         Check bot health status.
@@ -211,6 +206,7 @@ class UtilitiesCog(commands.Cog):
             health_status = {
                 "database": False,
                 "imports": False,
+                "imdb_search": False,
                 "bot_uptime": "Unknown",
                 "timestamp": datetime.now().isoformat()
             }
@@ -224,10 +220,25 @@ class UtilitiesCog(commands.Cog):
 
             # Check critical imports
             try:
-                from cogs.wishlist_commands import search_imdb_paginated
-                health_status["imports"] = search_imdb_paginated is not None
+                from cogs.wishlist_commands import search_imdb
+                health_status["imports"] = search_imdb is not None
             except:
                 health_status["imports"] = False
+
+            # Check that IMDb search returns rich GraphQL metadata.
+            try:
+                from utils.imdb_search import search_imdb_graphql
+
+                loop = asyncio.get_event_loop()
+                imdb_results, _, _ = await asyncio.wait_for(
+                    loop.run_in_executor(None, search_imdb_graphql, "Severance", "tvSeries", 1),
+                    timeout=10.0
+                )
+                health_status["imdb_search"] = bool(
+                    imdb_results and imdb_results[0].get("rating")
+                )
+            except Exception as e:
+                logger.warning(f"IMDb search health check failed: {e}")
 
             # Get bot uptime (approximate)
             try:
@@ -241,18 +252,21 @@ class UtilitiesCog(commands.Cog):
             # Build response embed
             db_status = "✅ Connected" if health_status["database"] else "❌ Failed"
             imports_status = "✅ Available" if health_status["imports"] else "⚠️ Missing (IMDb search unavailable)"
+            imdb_status = "✅ Ratings available" if health_status["imdb_search"] else "⚠️ Search fallback only"
+            is_healthy = health_status["database"] and health_status["imports"] and health_status["imdb_search"]
 
             embed = discord.Embed(
                 title="🏥 Bot Health Check",
-                color=discord.Color.green() if health_status["database"] else discord.Color.red(),
+                color=discord.Color.green() if is_healthy else discord.Color.orange(),
                 timestamp=datetime.fromisoformat(health_status["timestamp"])
             )
 
             embed.add_field(name="Database", value=db_status, inline=False)
             embed.add_field(name="Critical Imports", value=imports_status, inline=False)
+            embed.add_field(name="IMDb Search", value=imdb_status, inline=False)
             embed.add_field(name="Uptime", value=health_status["bot_uptime"], inline=False)
             embed.add_field(name="Status",
-                          value="🟢 Healthy" if health_status["database"] else "🔴 Unhealthy",
+                          value="🟢 Healthy" if is_healthy else "🟡 Needs attention",
                           inline=False)
 
             await interaction.followup.send(embed=embed)
@@ -275,8 +289,6 @@ class RandomShowView(discord.ui.View):
     @discord.ui.button(label="🎲 Try Another", style=discord.ButtonStyle.secondary)
     async def try_another(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Get another random suggestion."""
-        await interaction.response.defer()
-        # Call the random_show command again
         await self.cog.random_show(interaction, genre=None)
 
 

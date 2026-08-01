@@ -293,13 +293,21 @@ class DatabaseBridge:
                 conn.close()
 
     @staticmethod
-    def add_to_queue(title: str, content_type: str = "tvSeries", year: int = None, poster_url: str = None, rating: float = None) -> dict:
+    def add_to_queue(
+        title: str,
+        content_type: str = "tvSeries",
+        imdb_id: str = None,
+        year: int = None,
+        poster_url: str = None,
+        rating: float = None
+    ) -> dict:
         """
         Add a title to the scrape queue.
 
         Args:
             title: Title name
             content_type: 'tvSeries' or 'movie'
+            imdb_id: IMDb ID (optional)
             year: Release year (optional)
             poster_url: Poster image URL (optional)
             rating: IMDb rating (optional)
@@ -312,10 +320,10 @@ class DatabaseBridge:
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO scrape_queue
-                    (title, content_type, year, poster_url, rating, status)
-                    VALUES (%s, %s, %s, %s, %s, 'pending')
-                    RETURNING id, title, status, added_at
-                """, (title, content_type, year, poster_url, rating))
+                    (imdb_id, title, content_type, year, poster_url, rating, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                    RETURNING id, imdb_id, title, status, added_at
+                """, (imdb_id, title, content_type, year, poster_url, rating))
                 row = cur.fetchone()
                 conn.commit()
 
@@ -323,9 +331,10 @@ class DatabaseBridge:
                     return {
                         "success": True,
                         "queue_id": row[0],
-                        "title": row[1],
-                        "status": row[2],
-                        "added_at": row[3]
+                        "imdb_id": row[1],
+                        "title": row[2],
+                        "status": row[3],
+                        "added_at": row[4]
                     }
         except Error as e:
             logger.error(f"Error adding to queue: {e}")

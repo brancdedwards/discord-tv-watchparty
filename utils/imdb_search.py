@@ -6,6 +6,7 @@ Falls back to the autocomplete API if GraphQL is unavailable.
 
 import json
 import logging
+import re
 from typing import List, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -13,23 +14,86 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # GraphQL endpoint config
 # ---------------------------------------------------------------------------
-_GRAPHQL_URL = "https://caching.graphql.imdb.com/"
-_GRAPHQL_HASH = "b6a7c673cfb2d2cc8d78570a7d5f6e0d65601021fcbbdc71cde7a53468641fa1"
+_GRAPHQL_URL = "https://api.graphql.imdb.com/"
+_FIND_PAGE_SEARCH_QUERY = """
+query FindPageSearch(
+    $skipHasExact: Boolean!
+    $numResults: Int!
+    $searchTerm: String!
+    $includeAdult: Boolean!
+    $isExactMatch: Boolean!
+    $typeFilter: [MainSearchType!]
+    $titleSearchOptions: TitleSearchOptions
+    $after: String
+) {
+    results: mainSearch(
+        first: $numResults
+        after: $after
+        options: {
+            searchTerm: $searchTerm
+            type: $typeFilter
+            includeAdult: $includeAdult
+            isExactMatch: $isExactMatch
+            titleSearchOptions: $titleSearchOptions
+        }
+    ) {
+        edges {
+            node {
+                entity {
+                    __typename
+                    ... on Title {
+                        id
+                        titleText { text }
+                        releaseYear { year }
+                        titleType { id text }
+                        primaryImage { url }
+                        ratingsSummary { aggregateRating }
+                        titleGenres { genres { genre { text } } }
+                    }
+                }
+            }
+        }
+        pageInfo {
+            hasNextPage
+            endCursor
+        }
+    }
+    hasExact: mainSearch(
+        first: 1
+        options: {
+            searchTerm: $searchTerm
+            type: $typeFilter
+            includeAdult: $includeAdult
+            isExactMatch: true
+            titleSearchOptions: $titleSearchOptions
+        }
+    ) {
+        edges @skip(if: $skipHasExact) {
+            node {
+                entity {
+                    __typename
+                }
+            }
+        }
+    }
+}
+"""
 _GRAPHQL_HEADERS = {
-    "x-imdb-user-country": "US",
+    "accept": "*/*",
+    "accept-language": "en-US,en;q=0.9",
     "x-imdb-user-language": "en-US",
     "x-imdb-client-name": "imdb-web-next-localized",
-    "accept": "application/graphql+json, application/json",
     "content-type": "application/json",
-    "Referer": "https://www.imdb.com/",
+    "origin": "https://www.imdb.com",
+    "referer": "https://www.imdb.com/",
     "User-Agent": (
-        "Mozilla/5.0 (Linux; Android 8.0.0; SM-G955U Build/R16NW) "
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/146.0.0.0 Mobile Safari/537.36"
+        "Chrome/150.0.0.0 Safari/537.36"
     ),
-    "sec-ch-ua": '"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"',
-    "sec-ch-ua-mobile": "?1",
-    "sec-ch-ua-platform": '"Android"',
+    "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
     "DNT": "1",
 }
 
@@ -133,34 +197,25 @@ def search_imdb_graphql(
     variables: Dict = {
         "includeAdult": False,
         "isExactMatch": False,
-        "locale": "en-US",
         "numResults": num_results,
-        "originalTitleText": False,
-        "refTagQueryParam": None,
         "searchTerm": query.strip(),
         "skipHasExact": True,
-        "typeFilter": "TITLE",
-    }
-    if after:
-        variables["after"] = after
-
-    extensions = {
-        "persistedQuery": {
-            "sha256Hash": _GRAPHQL_HASH,
-            "version": 1,
-        }
+        "titleSearchOptions": None,
+        "typeFilter": ["TITLE"],
+        "after": after,
     }
 
-    params = {
-        "operationName": "FindPageSearch",
-        "variables": json.dumps(variables, separators=(",", ":")),
-        "extensions": json.dumps(extensions, separators=(",", ":")),
+    payload = {
+        "query": _FIND_PAGE_SEARCH_QUERY,
+        "variables": variables,
     }
 
     session, using_curl = _get_session()
-    response = session.get(_GRAPHQL_URL, params=params, headers=_GRAPHQL_HEADERS, timeout=8)
+    response = session.post(_GRAPHQL_URL, json=payload, headers=_GRAPHQL_HEADERS, timeout=8)
     response.raise_for_status()
     data = response.json()
+    if data.get("errors"):
+        logger.warning(f"GraphQL search '{query}' returned errors: {data.get('errors')}")
 
     results_block = (data.get("data") or {}).get("results") or {}
     edges = results_block.get("edges", [])
@@ -172,8 +227,12 @@ def search_imdb_graphql(
 
     logger.info(
         f"GraphQL search '{query}': {len(results)} results "
-        f"(has_next={has_next_page}, curl_cffi={using_curl})"
+        f"(raw_edges={len(edges)}, has_next={has_next_page}, curl_cffi={using_curl})"
     )
+    if edges and not results:
+        logger.warning(
+            f"GraphQL returned {len(edges)} raw edges for '{query}', but none matched the expected title schema/type filter."
+        )
     return results, next_cursor, has_next_page
 
 
@@ -186,15 +245,15 @@ def _search_imdb_autocomplete(query: str, content_type: str = "all") -> List[Dic
     Fall back to IMDb's suggestion/autocomplete API.
     Returns up to ~8 results with no pagination.
     """
-    import requests
-
     query_clean = query.strip().lower().replace(" ", "_")
     first_char = query_clean[0] if query_clean else "a"
     url = f"https://sg.media-imdb.com/suggests/{first_char}/{query_clean}.json"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
-    response = requests.get(url, headers=headers, timeout=5)
+    session, using_curl = _get_session()
+    response = session.get(url, headers=headers, timeout=5)
     response.raise_for_status()
+    logger.info(f"Autocomplete request '{query}' completed (curl_cffi={using_curl})")
 
     text = response.text
     if "imdb$" not in text:
@@ -204,7 +263,7 @@ def _search_imdb_autocomplete(query: str, content_type: str = "all") -> List[Dic
     data = json.loads(json_str)
 
     results = []
-    for item in data.get("d", []):
+    for source_rank, item in enumerate(data.get("d", [])):
         imdb_type = item.get("q", "").lower()
         if "tv series" in imdb_type or "tv mini series" in imdb_type:
             mapped_type = "tvSeries"
@@ -235,12 +294,102 @@ def _search_imdb_autocomplete(query: str, content_type: str = "all") -> List[Dic
             "title": title,
             "year": item.get("y"),
             "type": mapped_type,
+            "type_description": item.get("q"),
+            "summary": item.get("s"),
+            "year_range": item.get("yr"),
             "poster_url": poster_url,
             "rating": None,
             "genres": [],
+            "source_rank": source_rank,
         })
 
     return results
+
+
+def _normalize_genres(raw_genres) -> List[str]:
+    """Return IMDb JSON-LD genres as a simple list."""
+    if isinstance(raw_genres, list):
+        return [genre for genre in raw_genres if genre]
+    if isinstance(raw_genres, str) and raw_genres:
+        return [raw_genres]
+    return []
+
+
+def _enrich_result_from_title_page(result: Dict, session=None) -> bool:
+    """
+    Fill missing rating/genre/poster data from the IMDb title page JSON-LD.
+    Returns True when at least one field was added.
+    """
+    imdb_id = result.get("imdb_id")
+    if not imdb_id:
+        return False
+
+    own_session = session is None
+    if own_session:
+        session, _ = _get_session()
+
+    headers = {
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        "referer": "https://www.imdb.com/",
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/150.0.0.0 Safari/537.36"
+        ),
+    }
+    url = f"https://www.imdb.com/title/{imdb_id}/"
+
+    try:
+        response = session.get(url, headers=headers, timeout=4)
+        response.raise_for_status()
+        match = re.search(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            response.text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if not match:
+            return False
+
+        title_data = json.loads(match.group(1).strip())
+        changed = False
+
+        aggregate_rating = title_data.get("aggregateRating") or {}
+        rating_value = aggregate_rating.get("ratingValue")
+        if rating_value and not result.get("rating"):
+            result["rating"] = rating_value
+            changed = True
+
+        genres = _normalize_genres(title_data.get("genre"))
+        if genres and not result.get("genres"):
+            result["genres"] = genres
+            changed = True
+
+        image = title_data.get("image")
+        if image and not result.get("poster_url"):
+            result["poster_url"] = image
+            changed = True
+
+        return changed
+    except Exception as e:
+        logger.info(f"Title page enrichment skipped for {imdb_id}: {e}")
+        return False
+
+
+def _enrich_missing_details(results: List[Dict], limit: int = 3) -> int:
+    """Enrich the first few results that lack ratings or genres."""
+    if not results:
+        return 0
+
+    session, _ = _get_session()
+    enriched = 0
+    for result in results[:limit]:
+        if result.get("rating") and result.get("genres"):
+            continue
+        if _enrich_result_from_title_page(result, session=session):
+            enriched += 1
+
+    return enriched
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +430,8 @@ def search_imdb(query: str, content_type: str = "all") -> List[Dict]:
     # 1. GraphQL — 25 results with ratings + genres
     try:
         graphql_results, _, _ = search_imdb_graphql(query, content_type=content_type)
+        for source_rank, result in enumerate(graphql_results):
+            result["source_rank"] = source_rank
         logger.info(f"GraphQL: {len(graphql_results)} results")
     except Exception as e:
         logger.warning(f"GraphQL search failed: {e}")
@@ -297,7 +448,11 @@ def search_imdb(query: str, content_type: str = "all") -> List[Dict]:
     extras = [r for r in autocomplete_results if r["imdb_id"] not in seen_ids]
 
     combined = graphql_results + extras
-    logger.info(f"Combined: {len(combined)} results ({len(extras)} unique from autocomplete)")
+    enriched_count = _enrich_missing_details(combined, limit=3)
+    logger.info(
+        f"Combined: {len(combined)} results ({len(extras)} unique from autocomplete, "
+        f"{enriched_count} enriched from title pages)"
+    )
     return combined
 
 

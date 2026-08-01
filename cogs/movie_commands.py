@@ -18,20 +18,34 @@ PARENT_DIR = SCRIPT_DIR.parent  # GitHub/Data Science projects/
 # Add discord-tv-watchparty to path for local imports
 sys.path.insert(0, str(SCRIPT_DIR))
 
+from config import (
+    SCRAPER_POLL_INTERVAL,
+    MAX_SCRAPE_POLLS,
+    AUTHORIZED_SCRAPERS,
+    USERS,
+    REVIEW_ANALYZER_PATH as CONFIG_REVIEW_ANALYZER_PATH
+)
+
+
+def resolve_project_path(path_value: str) -> Path:
+    """Resolve config paths relative to this bot repo."""
+    path = Path(path_value).expanduser()
+    return path if path.is_absolute() else (SCRIPT_DIR / path).resolve()
+
+
 # Add review_analyzer to path for its imports
-REVIEW_ANALYZER_PATH = PARENT_DIR / "review_analyzer"
+REVIEW_ANALYZER_PATH = resolve_project_path(CONFIG_REVIEW_ANALYZER_PATH)
 if REVIEW_ANALYZER_PATH.exists():
     sys.path.insert(0, str(REVIEW_ANALYZER_PATH))
-    logger.info(f"Added review_analyzer to path: {REVIEW_ANALYZER_PATH}")
+    logger.info(f"Added review analyzer to path: {REVIEW_ANALYZER_PATH}")
 else:
-    logger.warning(f"review_analyzer not found at {REVIEW_ANALYZER_PATH}")
+    logger.warning(f"Review analyzer not found at {REVIEW_ANALYZER_PATH}")
 
 # Import local utilities
 from utils.db_bridge import DatabaseBridge
 from utils.imdb_scraper_bridge import ScraperBridge
 from utils.embed_formatter import EmbedFormatter
 from views.scrape_buttons import IMDbSelectionView, PaginationView
-from config import SCRAPER_POLL_INTERVAL, MAX_SCRAPE_POLLS, AUTHORIZED_SCRAPERS, USERS
 
 # Get Brandon's user ID for permission checks
 BRANDON_ID = None
@@ -78,6 +92,7 @@ class MovieCommandsCog(commands.Cog):
         name="add-movie",
         description="Add a movie to the watchlist"
     )
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(title="Movie title to search for")
     async def add_movie(self, interaction: discord.Interaction, title: str):
         """
@@ -142,6 +157,7 @@ class MovieCommandsCog(commands.Cog):
         name="scrape-movie",
         description="Scrape and get details for a movie"
     )
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.check(brandon_only)
     @app_commands.describe(
         movie_id="IMDb ID (tt...) or movie title",
@@ -291,6 +307,7 @@ class MovieCommandsCog(commands.Cog):
         name="list-movies",
         description="Browse all movies in the database"
     )
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         sort="Sort by: title, rating, or recent",
         page="Page number (1-based)"

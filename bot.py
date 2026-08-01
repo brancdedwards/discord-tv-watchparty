@@ -5,12 +5,18 @@ import os
 import logging
 import time
 import json
+from pathlib import Path
 from aiohttp import web
 from config import (
     DISCORD_TOKEN,
     BOT_INTENTS,
     COMMAND_PREFIX,
-    LOG_LEVEL
+    LOG_LEVEL,
+    DB_HOST,
+    DB_PORT,
+    DB_NAME,
+    DB_USER,
+    REVIEW_ANALYZER_PATH
 )
 
 # ===== Logging Setup =====
@@ -35,8 +41,28 @@ class ReviewBot(commands.Bot):
         self.test_channel_id = None  # Will be set on_ready
         logger.info("ReviewBot initialized")
 
+    def _resolve_project_path(self, path_value: str) -> Path:
+        """Resolve project-relative config paths from the bot repo."""
+        path = Path(path_value).expanduser()
+        bot_root = Path(__file__).parent
+        return path if path.is_absolute() else (bot_root / path).resolve()
+
+    def _log_config_summary(self):
+        """Log non-secret startup configuration for local/Render debugging."""
+        review_path = self._resolve_project_path(REVIEW_ANALYZER_PATH)
+        env_path = Path(__file__).parent / ".env"
+
+        logger.info("Config summary:")
+        logger.info(f"  .env present: {env_path.exists()}")
+        logger.info(f"  Database: {DB_USER}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
+        logger.info(f"  Review analyzer path: {review_path}")
+        logger.info(f"  Review analyzer present: {review_path.exists()}")
+        logger.info(f"  Command prefix: {COMMAND_PREFIX}")
+
     async def setup_hook(self):
         """Called before bot connects. Load all cogs."""
+        self._log_config_summary()
+
         cog_files = [
             "cogs.tv_commands",
             "cogs.movie_commands",

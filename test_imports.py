@@ -63,8 +63,10 @@ except ImportError as e:
 
 print()
 print("✓ Testing review_analyzer imports...")
-PARENT_DIR = Path(__file__).parent.parent
-REVIEW_ANALYZER_PATH = PARENT_DIR / "review_analyzer"
+from config import REVIEW_ANALYZER_PATH as CONFIG_REVIEW_ANALYZER_PATH
+BOT_ROOT = Path(__file__).parent
+configured_path = Path(CONFIG_REVIEW_ANALYZER_PATH).expanduser()
+REVIEW_ANALYZER_PATH = configured_path if configured_path.is_absolute() else (BOT_ROOT / configured_path).resolve()
 if REVIEW_ANALYZER_PATH.exists():
     sys.path.insert(0, str(REVIEW_ANALYZER_PATH))
     try:

@@ -17,18 +17,14 @@ class ScraperBridge:
     @staticmethod
     def get_scraper_path() -> Path:
         """Get the path to the review_analyzer project."""
-        # Try to resolve relative path first
-        analyzer_path = Path(REVIEW_ANALYZER_PATH).resolve()
-        if analyzer_path.exists():
-            return analyzer_path
-
-        # Try absolute path
-        analyzer_path = Path(REVIEW_ANALYZER_PATH)
+        config_path = Path(REVIEW_ANALYZER_PATH).expanduser()
+        bot_root = Path(__file__).parent.parent
+        analyzer_path = config_path if config_path.is_absolute() else (bot_root / config_path).resolve()
         if analyzer_path.exists():
             return analyzer_path
 
         raise FileNotFoundError(
-            f"review_analyzer project not found at {REVIEW_ANALYZER_PATH}"
+            f"review_analyzer project not found at {analyzer_path}"
         )
 
     @staticmethod
