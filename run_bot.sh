@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Discord TV Watchparty Bot Startup Script
+# The Living Room Bot Startup Script
 
 set -e  # Exit on error
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-echo "🤖 Discord TV Watchparty Bot"
+echo "🤖 The Living Room Bot"
 echo "📍 Location: $SCRIPT_DIR"
 echo ""
 

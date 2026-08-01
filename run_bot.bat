@@ -1,10 +1,10 @@
 @echo off
-REM Discord TV Watchparty Bot Startup Script (Windows)
+REM The Living Room Bot Startup Script (Windows)
 
 setlocal enabledelayedexpansion
 
 echo.
-echo 🤖 Discord TV Watchparty Bot
+echo 🤖 The Living Room Bot
 echo 📍 Location: %CD%
 echo.
 

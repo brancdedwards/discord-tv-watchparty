@@ -27,7 +27,7 @@ logging.basicConfig(
 logger = logging.getLogger("DiscordBot")
 
 # ===== Bot Class =====
-class ReviewBot(commands.Bot):
+class LivingRoomBot(commands.Bot):
     def __init__(self):
         super().__init__(
             command_prefix=COMMAND_PREFIX,
@@ -39,7 +39,7 @@ class ReviewBot(commands.Bot):
         self.health_check_failures = 0
         self.http_server = None
         self.test_channel_id = None  # Will be set on_ready
-        logger.info("ReviewBot initialized")
+        logger.info("The Living Room Bot initialized")
 
     def _resolve_project_path(self, path_value: str) -> Path:
         """Resolve project-relative config paths from the bot repo."""
@@ -184,7 +184,7 @@ class ReviewBot(commands.Bot):
 # ===== Main Entry Point =====
 async def main():
     """Start the bot."""
-    bot = ReviewBot()
+    bot = LivingRoomBot()
 
     async with bot:
         try:

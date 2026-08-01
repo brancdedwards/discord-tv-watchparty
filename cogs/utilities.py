@@ -79,7 +79,7 @@ class UtilitiesCog(commands.Cog):
         Show help information.
         """
         embed = discord.Embed(
-            title="🎬 TV & Movie Watchparty Bot",
+            title="The Living Room Bot",
             description="Use the watchparty panel for the easiest button-based flow.",
             color=discord.Color.gold()
         )
@@ -107,7 +107,7 @@ class UtilitiesCog(commands.Cog):
             inline=False
         )
 
-        embed.set_footer(text="Made with ❤️ for Brandon & Morgan")
+        embed.set_footer(text="Made for Brandon & Morgan")
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

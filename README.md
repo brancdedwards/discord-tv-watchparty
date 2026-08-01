@@ -1,6 +1,6 @@
-# Discord TV & Movie Watch-Party Bot
+# The Living Room Bot
 
-A Discord bot for you and Morgan to collaboratively pick TV shows and movies to watch together. Search IMDb, view ratings and genres, and get episode-by-episode breakdowns all from Discord!
+A Discord bot for you and Morgan to share low-friction household workflows, starting with picking TV shows and movies to watch together. Search IMDb, view ratings and genres, and get episode-by-episode breakdowns all from Discord.
 
 ## Features
 
@@ -265,4 +265,4 @@ For personal use. Respect IMDb's Terms of Service and rate limit requests.
 
 ---
 
-Made with ❤️ for Brandon & Morgan 🎬
+Made for Brandon & Morgan

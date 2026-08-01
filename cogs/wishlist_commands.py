@@ -390,7 +390,7 @@ class WishlistCommandsCog(commands.Cog):
     def create_panel_embed() -> discord.Embed:
         """Create the pinned watchparty control panel embed."""
         embed = discord.Embed(
-            title="TV & Movie Watchparty",
+            title="The Living Room",
             description="Suggest something, browse the shared list, or let the bot pick an idea.",
             color=discord.Color.gold()
         )
