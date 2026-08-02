@@ -351,6 +351,8 @@ def _extract_ingredients(description: str) -> list[str]:
 
     for line in candidates:
         if _is_non_recipe_line(line):
+            if ingredient_lines and _is_promo_or_link_line(line):
+                break
             continue
         if _looks_like_new_section(line) and ingredient_lines:
             break
@@ -410,6 +412,7 @@ def _looks_like_new_section(line: str) -> bool:
         "notes",
         "links",
         "follow me",
+        "follow for more",
         "chapters",
     }
 
@@ -435,7 +438,12 @@ def _is_non_recipe_line(line: str) -> bool:
         return True
     if lowered.startswith(("http://", "https://", "www.")):
         return True
-    promo_markers = ("subscribe", "substack", "follow me", "join the", "link in bio")
+    return _is_promo_or_link_line(line)
+
+
+def _is_promo_or_link_line(line: str) -> bool:
+    lowered = line.lower().strip()
+    promo_markers = ("subscribe", "substack", "follow me", "follow for more", "join the", "link in bio")
     return any(marker in lowered for marker in promo_markers)
 
 

@@ -42,6 +42,10 @@ def _recipe_next_step(extraction) -> str:
     if extraction.recipe_status == "complete_recipe":
         return "I found ingredients and steps. Give it a quick review before treating it as final."
     if extraction.recipe_status == "partial_recipe":
+        if extraction.ingredients and not extraction.instructions:
+            return "I found ingredients, but no written steps. Add notes if you want this to become a full recipe."
+        if extraction.instructions and not extraction.ingredients:
+            return "I found possible steps, but no ingredient list. Add notes if you want this to become a full recipe."
         return "I found some recipe text, but it may need notes or missing steps filled in."
     if extraction.recipe_status == "video_only":
         return "I found the video, but not ingredients or steps. Add notes if you want this to become a searchable recipe."
@@ -126,6 +130,19 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
 
     if extraction.tags:
         embed.add_field(name="Tags", value=", ".join(extraction.tags[:8]), inline=True)
+
+    if extraction.recipe_status == "partial_recipe":
+        missing_parts = []
+        if not extraction.ingredients:
+            missing_parts.append("ingredients")
+        if not extraction.instructions:
+            missing_parts.append("steps")
+        if missing_parts:
+            embed.add_field(
+                name="Recipe Text",
+                value=f"Found partial recipe text. Missing: {', '.join(missing_parts)}.",
+                inline=False,
+            )
 
     if extraction.recipe_status == "video_only" and not extraction.ingredients and not extraction.instructions:
         snapshot = _snapshot_text(extraction)
