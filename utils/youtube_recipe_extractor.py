@@ -114,6 +114,15 @@ def extract_youtube_recipe(
             result.warnings.append(f"YouTube Data API metadata failed: {exc}")
 
     try:
+        oembed = _fetch_oembed_metadata(url)
+        result.title = result.title or oembed.get("title")
+        result.channel = result.channel or (oembed.get("author_name") or "").strip()
+        if oembed and "youtube_oembed" not in result.extraction_sources:
+            result.extraction_sources.append("youtube_oembed")
+    except Exception as exc:
+        result.warnings.append(f"YouTube oEmbed metadata failed: {exc}")
+
+    try:
         watch_html = _http_get(url)
         player_response = _parse_player_response(watch_html)
         details = player_response.get("videoDetails", {})
@@ -142,6 +151,11 @@ def extract_youtube_recipe(
 
     _classify_recipe(result)
     return result
+
+
+def _fetch_oembed_metadata(url: str) -> dict[str, Any]:
+    params = urlencode({"url": url, "format": "json"})
+    return json.loads(_http_get(f"https://www.youtube.com/oembed?{params}"))
 
 
 def _fetch_video_snippet(video_id: str, api_key: str) -> dict[str, Any]:
@@ -236,7 +250,7 @@ def _parse_caption_xml(caption_xml: str) -> str:
 
 def _classify_recipe(result: YouTubeRecipeExtraction) -> None:
     source_text = "\n".join(
-        part for part in [result.description, "\n".join(result.comments), result.transcript] if part
+        part for part in [result.title, result.description, "\n".join(result.comments), result.transcript] if part
     )
     normalized = _normalize_text(source_text)
     description_lower = result.description.lower()
@@ -261,13 +275,33 @@ def _classify_recipe(result: YouTubeRecipeExtraction) -> None:
     has_ingredient_section = "ingredient" in description_lower
     has_instruction_section = any(word in description_lower for word in ["instruction", "direction", "method"])
 
+    title_lower = (result.title or result.recipe_title or "").lower()
+    looks_like_food_video = any(
+        word in normalized or word in title_lower
+        for word in [
+            "bake",
+            "bolognese",
+            "breakfast",
+            "chicken",
+            "cook",
+            "dinner",
+            "food",
+            "hollandaise",
+            "meal prep",
+            "pasta",
+            "recipe",
+            "sauce",
+            "shorts",
+        ]
+    )
+
     if result.ingredients and result.instructions:
         result.recipe_status = "complete_recipe"
         result.confidence = "high" if has_ingredient_section and has_instruction_section else "medium"
     elif result.ingredients or has_recipe_words:
         result.recipe_status = "partial_recipe"
         result.confidence = "medium" if result.ingredients else "low"
-    elif result.transcript:
+    elif result.transcript or looks_like_food_video:
         result.recipe_status = "video_only"
         result.confidence = "low"
     else:

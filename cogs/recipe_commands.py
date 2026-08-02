@@ -26,12 +26,50 @@ def _is_youtube_url(url: str) -> bool:
     return "youtube.com/" in lowered or "youtu.be/" in lowered
 
 
+def _format_source_labels(sources: list[str]) -> str:
+    labels = {
+        "youtube_api_description": "YouTube description",
+        "youtube_oembed": "YouTube video metadata",
+        "watch_page_description": "YouTube watch page",
+        "caption_transcript": "captions/transcript",
+        "youtube_api_comments": "YouTube comments",
+    }
+    return ", ".join(labels.get(source, source.replace("_", " ")) for source in sources)
+
+
+def _recipe_next_step(extraction) -> str:
+    if extraction.recipe_status == "complete_recipe":
+        return "I found ingredients and steps. Give it a quick review before treating it as final."
+    if extraction.recipe_status == "partial_recipe":
+        return "I found some recipe text, but it may need notes or missing steps filled in."
+    if extraction.recipe_status == "video_only":
+        return "I found the video, but not ingredients or steps. Add notes if you want this to become a searchable recipe."
+    if extraction.recipe_status == "inspiration_only":
+        return "I saved this as an idea. Add a recipe name, ingredients, or notes when you have them."
+    return "Review this before saving it as a recipe."
+
+
+def _clean_video_description(description: str) -> str:
+    lines = []
+    for line in description.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if not stripped:
+            continue
+        if stripped.startswith(("http://", "https://", "www.")):
+            continue
+        if any(marker in lowered for marker in ["follow me", "instagram:", "tik tok:", "twitter:", "facebook:", "subreddit:"]):
+            continue
+        lines.append(stripped)
+    return "\n".join(lines)
+
+
 def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
     status_labels = {
         "complete_recipe": "Complete recipe",
         "partial_recipe": "Partial recipe",
-        "video_only": "Video only",
-        "inspiration_only": "Inspiration only",
+        "video_only": "Video idea",
+        "inspiration_only": "Idea saved",
         "not_recipe": "Not a recipe",
     }
     status_label = status_labels.get(extraction.recipe_status, extraction.recipe_status)
@@ -46,10 +84,11 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
 
     title = extraction.recipe_title or extraction.title or "Recipe idea"
     embed = discord.Embed(title=title, url=extraction.url, color=color)
+    source_text = _format_source_labels(extraction.extraction_sources) or "No extractable source found"
     embed.description = (
         f"**Status:** {status_label}\n"
         f"**Confidence:** {extraction.confidence.title()}\n"
-        f"**Source:** {', '.join(extraction.extraction_sources) or 'No extractable source found'}"
+        f"**Source:** {source_text}"
     )
 
     if extraction.title and extraction.title != title:
@@ -64,6 +103,21 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
 
     if extraction.tags:
         embed.add_field(name="Tags", value=", ".join(extraction.tags[:8]), inline=True)
+
+    if extraction.recipe_status == "video_only" and not extraction.ingredients and not extraction.instructions:
+        description = _clean_video_description(extraction.description)
+        if description:
+            embed.add_field(
+                name="Video Description",
+                value=EmbedFormatter.truncate(description, 500),
+                inline=False,
+            )
+        if extraction.title and "#shorts" in extraction.title.lower():
+            embed.add_field(
+                name="Shorts Note",
+                value="YouTube Shorts often do not include full recipe text, so this is saved as a video idea.",
+                inline=False,
+            )
 
     if extraction.ingredients:
         ingredients = "\n".join(f"- {ingredient}" for ingredient in extraction.ingredients[:12])
@@ -88,10 +142,15 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
     if extraction.warnings:
         embed.add_field(
             name="Warnings",
-            value=EmbedFormatter.truncate("\n".join(extraction.warnings[:3])),
+            value=EmbedFormatter.truncate("\n".join(extraction.warnings[:2])),
             inline=False,
         )
 
+    embed.add_field(
+        name="Next Step",
+        value=_recipe_next_step(extraction),
+        inline=False,
+    )
     embed.set_footer(text=f"Submitted by {submitted_by.display_name}")
     return embed
 
@@ -152,7 +211,10 @@ class RecipePanelView(discord.ui.View):
         custom_id="recipe_panel:add_recipe",
     )
     async def add_recipe_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AddRecipeModal(self.cog))
+        try:
+            await interaction.response.send_modal(AddRecipeModal(self.cog))
+        except discord.NotFound:
+            logger.warning("Recipe panel interaction expired before modal could be opened")
 
 
 class RecipeCommandsCog(commands.Cog):
@@ -267,11 +329,6 @@ class RecipeCommandsCog(commands.Cog):
                         value=EmbedFormatter.truncate(clean_notes),
                         inline=False,
                     )
-                embed.add_field(
-                    name="Next Step",
-                    value="Review the extraction before treating this as a final saved recipe.",
-                    inline=False,
-                )
                 await interaction.followup.send(embed=embed)
                 return
 
