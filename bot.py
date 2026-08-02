@@ -115,7 +115,7 @@ class LivingRoomBot(commands.Bot):
         try:
             from utils.db_bridge import DatabaseBridge
             db = DatabaseBridge()
-            db.get_wishlist()  # Test database connection
+            await asyncio.to_thread(db.get_wishlist)  # Test database connection
 
             uptime = int(time.time() - self.start_time)
             health_data = {
@@ -143,7 +143,7 @@ class LivingRoomBot(commands.Bot):
             db = DatabaseBridge()
 
             # Check database
-            db.get_wishlist()
+            await asyncio.to_thread(db.get_wishlist)
 
             # Check bot latency
             if self.latency > 1.0:

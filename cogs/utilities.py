@@ -197,11 +197,15 @@ class UtilitiesCog(commands.Cog):
         """
         Check bot health status.
         """
-        await interaction.response.defer(ephemeral=True)
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.NotFound:
+            logger.warning("Health check interaction expired before it could be acknowledged")
+            return
 
         try:
             import time
-            from datetime import datetime, timedelta
+            from datetime import datetime
 
             health_status = {
                 "database": False,
@@ -213,7 +217,7 @@ class UtilitiesCog(commands.Cog):
 
             # Check database connection
             try:
-                self.db.get_wishlist()
+                await asyncio.to_thread(self.db.get_wishlist)
                 health_status["database"] = True
             except Exception as e:
                 logger.warning(f"Database health check failed: {e}")
@@ -273,10 +277,13 @@ class UtilitiesCog(commands.Cog):
 
         except Exception as e:
             logger.error(f"Error in health_check: {e}")
-            await interaction.followup.send(
-                embed=EmbedFormatter.format_error(f"Health check error: {str(e)[:100]}"),
-                ephemeral=True
-            )
+            try:
+                await interaction.followup.send(
+                    embed=EmbedFormatter.format_error(f"Health check error: {str(e)[:100]}"),
+                    ephemeral=True
+                )
+            except discord.NotFound:
+                logger.warning("Health check followup interaction expired")
 
 
 class RandomShowView(discord.ui.View):
