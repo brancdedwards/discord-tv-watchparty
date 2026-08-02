@@ -140,6 +140,12 @@ def extract_youtube_recipe(
     except Exception as exc:
         result.warnings.append(f"Watch page metadata failed: {exc}")
 
+    if not result.description and "youtube_oembed" in result.extraction_sources:
+        result.warnings.append(
+            "Only YouTube video metadata was available; description text was not captured. "
+            "Set YOUTUBE_API_KEY for more reliable recipe descriptions."
+        )
+
     if player_response:
         transcript = _fetch_transcript_from_player_response(player_response)
         if transcript:
@@ -286,6 +292,7 @@ def _classify_recipe(result: YouTubeRecipeExtraction) -> None:
         word in normalized or word in title_lower
         for word in [
             "bake",
+            "beef",
             "bolognese",
             "breakfast",
             "chicken",
@@ -298,6 +305,8 @@ def _classify_recipe(result: YouTubeRecipeExtraction) -> None:
             "recipe",
             "sauce",
             "shorts",
+            "steak",
+            "wellington",
         ]
     )
 
