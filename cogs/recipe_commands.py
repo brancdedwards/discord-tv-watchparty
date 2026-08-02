@@ -396,6 +396,38 @@ class AddRecipeModal(discord.ui.Modal, title="Add a recipe"):
         )
 
 
+class RemoveRecipeModal(discord.ui.Modal, title="Remove a recipe"):
+    """Modal for removing a saved recipe by ID."""
+
+    recipe_id_input = discord.ui.TextInput(
+        label="Recipe ID",
+        placeholder="Use /recipe list or See Recipes to find the ID",
+        required=True,
+        max_length=12,
+    )
+
+    def __init__(self, cog: "RecipeCommandsCog"):
+        super().__init__()
+        self.cog = cog
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        raw_recipe_id = str(self.recipe_id_input.value).strip().lstrip("#")
+        if not raw_recipe_id.isdigit():
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Recipe ID must be a number, like `12` or `#12`."),
+                ephemeral=True,
+            )
+            return
+        await self.cog.remove_recipe_by_id(interaction, int(raw_recipe_id), ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        logger.error(
+            "Discord UI error in RemoveRecipeModal",
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+
 class RecipePanelView(discord.ui.View):
     """Persistent recipe channel button panel."""
 
@@ -426,6 +458,17 @@ class RecipePanelView(discord.ui.View):
             logger.warning("Recipe list interaction expired before it could be deferred")
             return
         await self.cog.show_recipe_list(interaction, page=1, ephemeral=True)
+
+    @discord.ui.button(
+        label="Remove Recipe",
+        style=discord.ButtonStyle.danger,
+        custom_id="recipe_panel:remove_recipe",
+    )
+    async def remove_recipe_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.response.send_modal(RemoveRecipeModal(self.cog))
+        except discord.NotFound:
+            logger.warning("Recipe remove interaction expired before modal could be opened")
 
 
 class RecipeCommandsCog(commands.Cog):
@@ -643,6 +686,15 @@ class RecipeCommandsCog(commands.Cog):
     @app_commands.describe(recipe_id="Recipe ID from /recipe list")
     async def remove_recipe(self, interaction: discord.Interaction, recipe_id: int):
         await interaction.response.defer(thinking=True)
+        await self.remove_recipe_by_id(interaction, recipe_id)
+
+    async def remove_recipe_by_id(
+        self,
+        interaction: discord.Interaction,
+        recipe_id: int,
+        ephemeral: bool = False,
+    ):
+        """Remove a recipe after the interaction has already been acknowledged."""
         if not await self.ensure_recipes_ready():
             await interaction.followup.send(
                 embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
@@ -657,7 +709,8 @@ class RecipeCommandsCog(commands.Cog):
             )
             return
         await interaction.followup.send(
-            embed=EmbedFormatter.format_info("Recipe Removed", f"Removed recipe `#{recipe_id}`.")
+            embed=EmbedFormatter.format_info("Recipe Removed", f"Removed recipe `#{recipe_id}`."),
+            ephemeral=ephemeral,
         )
 
     async def handle_recipe_submission(
