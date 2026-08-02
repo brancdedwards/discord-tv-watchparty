@@ -4,6 +4,7 @@ Discord slash commands for recipe capture and extraction.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 import sys
 from pathlib import Path
@@ -64,6 +65,23 @@ def _clean_video_description(description: str) -> str:
     return "\n".join(lines)
 
 
+def _format_captured_time(captured_at: str | None) -> str:
+    if not captured_at:
+        return "Captured just now"
+    try:
+        captured = datetime.fromisoformat(captured_at)
+        return f"Captured {discord.utils.format_dt(captured, style='f')}"
+    except ValueError:
+        return "Captured just now"
+
+
+def _snapshot_text(extraction) -> str:
+    description = _clean_video_description(extraction.description)
+    if not description:
+        return ""
+    return EmbedFormatter.truncate(description, 700)
+
+
 def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
     status_labels = {
         "complete_recipe": "Complete recipe",
@@ -84,11 +102,16 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
 
     title = extraction.recipe_title or extraction.title or "Recipe idea"
     embed = discord.Embed(title=title, url=extraction.url, color=color)
+    try:
+        embed.timestamp = datetime.fromisoformat(extraction.captured_at)
+    except (TypeError, ValueError):
+        embed.timestamp = discord.utils.utcnow()
     source_text = _format_source_labels(extraction.extraction_sources) or "No extractable source found"
     embed.description = (
         f"**Status:** {status_label}\n"
         f"**Confidence:** {extraction.confidence.title()}\n"
-        f"**Source:** {source_text}"
+        f"**Source:** {source_text}\n"
+        f"**Snapshot:** {_format_captured_time(extraction.captured_at)}"
     )
 
     if extraction.title and extraction.title != title:
@@ -105,11 +128,11 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
         embed.add_field(name="Tags", value=", ".join(extraction.tags[:8]), inline=True)
 
     if extraction.recipe_status == "video_only" and not extraction.ingredients and not extraction.instructions:
-        description = _clean_video_description(extraction.description)
-        if description:
+        snapshot = _snapshot_text(extraction)
+        if snapshot:
             embed.add_field(
-                name="Video Description",
-                value=EmbedFormatter.truncate(description, 500),
+                name="Source Snapshot",
+                value=snapshot,
                 inline=False,
             )
         if extraction.title and "#shorts" in extraction.title.lower():
@@ -118,6 +141,25 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
                 value="YouTube Shorts often do not include full recipe text, so this is saved as a video idea.",
                 inline=False,
             )
+
+    if extraction.recipe_status in {"partial_recipe", "inspiration_only"} and not extraction.ingredients:
+        snapshot = _snapshot_text(extraction)
+        if snapshot:
+            embed.add_field(
+                name="Source Snapshot",
+                value=snapshot,
+                inline=False,
+            )
+
+    if extraction.source_links:
+        links = "\n".join(extraction.source_links[:3])
+        if len(extraction.source_links) > 3:
+            links += f"\n...and {len(extraction.source_links) - 3} more"
+        embed.add_field(
+            name="Links Found",
+            value=EmbedFormatter.truncate(links, 700),
+            inline=False,
+        )
 
     if extraction.ingredients:
         ingredients = "\n".join(f"- {ingredient}" for ingredient in extraction.ingredients[:12])
@@ -336,8 +378,12 @@ class RecipeCommandsCog(commands.Cog):
             embed = discord.Embed(
                 title=display_title,
                 color=discord.Color.blurple(),
-                description="Saved as a recipe idea. Extraction is only available for YouTube links right now.",
+                description=(
+                    "Saved as a recipe idea. Extraction is only available for YouTube links right now.\n"
+                    f"**Snapshot:** Captured {discord.utils.format_dt(discord.utils.utcnow(), style='f')}"
+                ),
             )
+            embed.timestamp = discord.utils.utcnow()
             if clean_url:
                 embed.add_field(name="Source", value=clean_url, inline=False)
             if clean_notes:

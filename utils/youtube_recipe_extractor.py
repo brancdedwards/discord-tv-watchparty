@@ -8,6 +8,7 @@ without one, the extractor falls back to the public watch page metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from html import unescape
 import argparse
 import json
@@ -30,11 +31,13 @@ USER_AGENT = (
 class YouTubeRecipeExtraction:
     video_id: str
     url: str
+    captured_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     title: str | None = None
     channel: str | None = None
     description: str = ""
     transcript: str = ""
     comments: list[str] = field(default_factory=list)
+    source_links: list[str] = field(default_factory=list)
     extraction_sources: list[str] = field(default_factory=list)
     recipe_status: str = "video_only"
     confidence: str = "low"
@@ -48,6 +51,7 @@ class YouTubeRecipeExtraction:
         return {
             "video_id": self.video_id,
             "url": self.url,
+            "captured_at": self.captured_at,
             "title": self.title,
             "channel": self.channel,
             "recipe_title": self.recipe_title,
@@ -59,6 +63,7 @@ class YouTubeRecipeExtraction:
             "tags": self.tags,
             "description_preview": self.description[:1000],
             "transcript_preview": self.transcript[:1000],
+            "source_links": self.source_links,
             "comments": self.comments,
             "warnings": self.warnings,
         }
@@ -149,6 +154,7 @@ def extract_youtube_recipe(
         except Exception as exc:
             result.warnings.append(f"YouTube comments failed: {exc}")
 
+    result.source_links = _extract_links(result.description)
     _classify_recipe(result)
     return result
 
@@ -311,6 +317,22 @@ def _classify_recipe(result: YouTubeRecipeExtraction) -> None:
 
 def _normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _extract_links(text: str) -> list[str]:
+    if not text:
+        return []
+    links = re.findall(r"https?://[^\s)>\]]+", text)
+    return _dedupe_preserve_order([_clean_link(link) for link in links if _clean_link(link)])
+
+
+def _clean_link(link: str) -> str:
+    cleaned = link.rstrip(".,;!")
+    for marker in ("Subscribe", "FOLLOW", "Follow", "Hungry"):
+        marker_index = cleaned.find(marker)
+        if marker_index > 0 and cleaned[marker_index - 1].islower():
+            cleaned = cleaned[:marker_index]
+    return cleaned.rstrip(".,;!")
 
 
 def _extract_ingredients(description: str) -> list[str]:
