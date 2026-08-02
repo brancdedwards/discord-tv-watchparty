@@ -19,6 +19,7 @@ SCRIPT_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from utils.embed_formatter import EmbedFormatter
+from utils.db_bridge import DatabaseBridge
 from utils.youtube_recipe_extractor import extract_youtube_recipe
 
 
@@ -214,6 +215,144 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
     return embed
 
 
+def _recipe_status_label(status: str) -> str:
+    labels = {
+        "complete_recipe": "Complete recipe",
+        "partial_recipe": "Partial recipe",
+        "video_only": "Video idea",
+        "inspiration_only": "Idea saved",
+        "idea_saved": "Idea saved",
+        "needs_review": "Needs review",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def _recipe_color(status: str) -> discord.Color:
+    return {
+        "complete_recipe": discord.Color.green(),
+        "partial_recipe": discord.Color.gold(),
+        "video_only": discord.Color.blurple(),
+        "inspiration_only": discord.Color.light_grey(),
+        "idea_saved": discord.Color.light_grey(),
+        "needs_review": discord.Color.gold(),
+    }.get(status, discord.Color.blurple())
+
+
+def _recipe_from_extraction(extraction, added_by: str, notes: str | None = None) -> dict:
+    return {
+        "title": extraction.recipe_title or extraction.title or "Recipe idea",
+        "source_url": extraction.url,
+        "source_type": "youtube",
+        "source_video_id": extraction.video_id,
+        "source_title": extraction.title,
+        "channel": extraction.channel,
+        "status": extraction.recipe_status,
+        "confidence": extraction.confidence,
+        "added_by": added_by,
+        "notes": notes,
+        "source_description": extraction.description,
+        "source_links": extraction.source_links,
+        "ingredients": extraction.ingredients,
+        "instructions": extraction.instructions,
+        "tags": extraction.tags,
+        "extraction_sources": extraction.extraction_sources,
+        "warnings": extraction.warnings,
+        "captured_at": extraction.captured_at,
+    }
+
+
+def _manual_recipe_payload(
+    title: str,
+    added_by: str,
+    url: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    return {
+        "title": title,
+        "source_url": url,
+        "source_type": "link" if url else "manual",
+        "status": "idea_saved",
+        "confidence": "low",
+        "added_by": added_by,
+        "notes": notes,
+        "source_links": [url] if url else [],
+    }
+
+
+def _format_saved_recipe_embed(recipe: dict) -> discord.Embed:
+    embed = discord.Embed(
+        title=recipe["title"],
+        url=recipe.get("source_url"),
+        color=_recipe_color(recipe.get("status")),
+        description=(
+            f"**ID:** `{recipe['recipe_id']}`\n"
+            f"**Status:** {_recipe_status_label(recipe.get('status'))}\n"
+            f"**Confidence:** {(recipe.get('confidence') or 'low').title()}"
+        ),
+    )
+    if recipe.get("added_at"):
+        embed.timestamp = recipe["added_at"]
+    if recipe.get("channel"):
+        embed.add_field(name="Channel", value=recipe["channel"], inline=True)
+    if recipe.get("tags"):
+        embed.add_field(name="Tags", value=", ".join(recipe["tags"][:8]), inline=True)
+    if recipe.get("notes"):
+        embed.add_field(name="Notes", value=EmbedFormatter.truncate(recipe["notes"]), inline=False)
+    if recipe.get("status") == "partial_recipe":
+        missing = []
+        if not recipe.get("ingredients"):
+            missing.append("ingredients")
+        if not recipe.get("instructions"):
+            missing.append("steps")
+        if missing:
+            embed.add_field(name="Recipe Text", value=f"Missing: {', '.join(missing)}.", inline=False)
+    if recipe.get("ingredients"):
+        ingredients = "\n".join(f"- {item}" for item in recipe["ingredients"][:12])
+        if len(recipe["ingredients"]) > 12:
+            ingredients += f"\n...and {len(recipe['ingredients']) - 12} more"
+        embed.add_field(name="Ingredients", value=EmbedFormatter.truncate(ingredients), inline=False)
+    if recipe.get("instructions"):
+        steps = "\n".join(f"{idx}. {step}" for idx, step in enumerate(recipe["instructions"][:6], 1))
+        if len(recipe["instructions"]) > 6:
+            steps += f"\n...and {len(recipe['instructions']) - 6} more"
+        embed.add_field(name="Steps", value=EmbedFormatter.truncate(steps), inline=False)
+    if recipe.get("source_links"):
+        links = "\n".join(recipe["source_links"][:3])
+        if len(recipe["source_links"]) > 3:
+            links += f"\n...and {len(recipe['source_links']) - 3} more"
+        embed.add_field(name="Links", value=EmbedFormatter.truncate(links, 700), inline=False)
+    embed.set_footer(text=f"Added by {recipe.get('added_by') or 'Unknown'}")
+    return embed
+
+
+def _format_recipe_list_embed(recipes: list, total: int, page: int, query: str | None = None) -> discord.Embed:
+    title = "Saved Recipes" if not query else f"Recipe Search: {query}"
+    embed = discord.Embed(
+        title=title,
+        color=discord.Color.green(),
+        description=f"Page {page} • {total} saved recipe{'s' if total != 1 else ''}",
+    )
+    if not recipes:
+        embed.description = "No recipes found yet."
+        return embed
+
+    for recipe in recipes:
+        bits = [
+            f"`#{recipe['recipe_id']}`",
+            _recipe_status_label(recipe.get("status")),
+        ]
+        if recipe.get("ingredients"):
+            bits.append(f"{len(recipe['ingredients'])} ingredients")
+        if recipe.get("tags"):
+            bits.append(", ".join(recipe["tags"][:3]))
+        embed.add_field(
+            name=recipe["title"][:256],
+            value=" • ".join(bits),
+            inline=False,
+        )
+    return embed
+
+
 class AddRecipeModal(discord.ui.Modal, title="Add a recipe"):
     """Modal opened by the pinned recipe panel."""
 
@@ -275,6 +414,15 @@ class RecipePanelView(discord.ui.View):
         except discord.NotFound:
             logger.warning("Recipe panel interaction expired before modal could be opened")
 
+    @discord.ui.button(
+        label="See Recipes",
+        style=discord.ButtonStyle.secondary,
+        custom_id="recipe_panel:list_recipes",
+    )
+    async def list_recipes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.cog.show_recipe_list(interaction, page=1, ephemeral=True)
+
 
 class RecipeCommandsCog(commands.Cog):
     """Cog for recipe commands."""
@@ -286,7 +434,10 @@ class RecipeCommandsCog(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.db = DatabaseBridge()
         self.bot.add_view(RecipePanelView(self))
+        if not self.db.ensure_recipes_schema():
+            logger.warning("Recipe schema was not created; recipe persistence may fail")
 
     @staticmethod
     def create_panel_embed() -> discord.Embed:
@@ -298,7 +449,7 @@ class RecipeCommandsCog(commands.Cog):
         )
         embed.add_field(
             name="How It Saves",
-            value="YouTube descriptions are inspected automatically. Other links are saved as recipe ideas for review.",
+            value="YouTube descriptions are inspected automatically. Saved recipes can be viewed, edited, or removed later.",
             inline=False,
         )
         embed.set_footer(text="Pin this message in #recipes so it is easy to find.")
@@ -348,6 +499,127 @@ class RecipeCommandsCog(commands.Cog):
         await interaction.response.defer(thinking=True)
         await self.handle_recipe_submission(interaction, title=title, url=url, notes=notes)
 
+    async def show_recipe_list(
+        self,
+        interaction: discord.Interaction,
+        page: int = 1,
+        query: str | None = None,
+        ephemeral: bool = False,
+    ):
+        page = max(page, 1)
+        limit = 10
+        offset = (page - 1) * limit
+        total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, query)
+        embed = _format_recipe_list_embed(recipes, total, page, query=query)
+        await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+
+    @recipe.command(
+        name="list",
+        description="View saved recipes"
+    )
+    @app_commands.describe(
+        page="Page number",
+        query="Optional title/notes search"
+    )
+    async def list_recipes(
+        self,
+        interaction: discord.Interaction,
+        page: int = 1,
+        query: str | None = None,
+    ):
+        await interaction.response.defer(thinking=True)
+        await self.show_recipe_list(interaction, page=page, query=query)
+
+    @recipe.command(
+        name="view",
+        description="View one saved recipe by ID"
+    )
+    @app_commands.describe(recipe_id="Recipe ID from /recipe list")
+    async def view_recipe(self, interaction: discord.Interaction, recipe_id: int):
+        await interaction.response.defer(thinking=True)
+        recipe = await asyncio.to_thread(self.db.get_recipe, recipe_id)
+        if not recipe:
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error(f"No saved recipe found for ID `{recipe_id}`."),
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(embed=_format_saved_recipe_embed(recipe))
+
+    @recipe.command(
+        name="edit",
+        description="Edit a saved recipe's title, notes, or status"
+    )
+    @app_commands.describe(
+        recipe_id="Recipe ID from /recipe list",
+        title="Optional new title",
+        notes="Optional replacement notes",
+        status="Optional status"
+    )
+    @app_commands.choices(status=[
+        app_commands.Choice(name="Complete recipe", value="complete_recipe"),
+        app_commands.Choice(name="Partial recipe", value="partial_recipe"),
+        app_commands.Choice(name="Video idea", value="video_only"),
+        app_commands.Choice(name="Idea saved", value="idea_saved"),
+        app_commands.Choice(name="Needs review", value="needs_review"),
+    ])
+    async def edit_recipe(
+        self,
+        interaction: discord.Interaction,
+        recipe_id: int,
+        title: str | None = None,
+        notes: str | None = None,
+        status: app_commands.Choice[str] | None = None,
+    ):
+        await interaction.response.defer(thinking=True)
+        clean_title = title.strip() if title else None
+        clean_notes = notes.strip() if notes is not None else None
+        status_value = status.value if status else None
+
+        if not clean_title and notes is None and not status_value:
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Provide a title, notes, or status to update."),
+                ephemeral=True,
+            )
+            return
+
+        updated = await asyncio.to_thread(
+            self.db.update_recipe,
+            recipe_id,
+            title=clean_title,
+            notes=clean_notes,
+            status=status_value,
+        )
+        if not updated:
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error(f"No saved recipe found for ID `{recipe_id}`."),
+                ephemeral=True,
+            )
+            return
+
+        recipe = await asyncio.to_thread(self.db.get_recipe, recipe_id)
+        embed = _format_saved_recipe_embed(recipe)
+        embed.add_field(name="Updated", value="Recipe changes saved.", inline=False)
+        await interaction.followup.send(embed=embed)
+
+    @recipe.command(
+        name="remove",
+        description="Remove a saved recipe by ID"
+    )
+    @app_commands.describe(recipe_id="Recipe ID from /recipe list")
+    async def remove_recipe(self, interaction: discord.Interaction, recipe_id: int):
+        await interaction.response.defer(thinking=True)
+        removed = await asyncio.to_thread(self.db.remove_recipe, recipe_id)
+        if not removed:
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error(f"No saved recipe found for ID `{recipe_id}`."),
+                ephemeral=True,
+            )
+            return
+        await interaction.followup.send(
+            embed=EmbedFormatter.format_info("Recipe Removed", f"Removed recipe `#{recipe_id}`.")
+        )
+
     async def handle_recipe_submission(
         self,
         interaction: discord.Interaction,
@@ -381,32 +653,75 @@ class RecipeCommandsCog(commands.Cog):
                     clean_url,
                     recipe_title=clean_title,
                 )
-                embed = _format_recipe_extraction_embed(extraction, interaction.user)
-                if clean_notes:
-                    embed.add_field(
-                        name="Notes",
-                        value=EmbedFormatter.truncate(clean_notes),
-                        inline=False,
+                payload = _recipe_from_extraction(
+                    extraction,
+                    added_by=interaction.user.display_name,
+                    notes=clean_notes,
+                )
+                add_result = await asyncio.to_thread(self.db.add_recipe, payload)
+                if not add_result.get("success"):
+                    duplicate_id = add_result.get("duplicate_id")
+                    if duplicate_id:
+                        await interaction.followup.send(
+                            embed=EmbedFormatter.format_info(
+                                "Already Saved",
+                                f"That source link is already saved as recipe `#{duplicate_id}`."
+                            ),
+                            ephemeral=True,
+                        )
+                        return
+                    await interaction.followup.send(
+                        embed=EmbedFormatter.format_error(
+                            f"Could not save recipe: {add_result.get('error', 'unknown error')[:120]}"
+                        ),
+                        ephemeral=True,
                     )
+                    return
+
+                saved_recipe = await asyncio.to_thread(self.db.get_recipe, add_result["recipe_id"])
+                embed = _format_saved_recipe_embed(saved_recipe)
+                embed.add_field(
+                    name="Saved",
+                    value=f"Use `/recipe view {saved_recipe['recipe_id']}` to open it later.",
+                    inline=False,
+                )
                 await interaction.followup.send(embed=embed)
                 return
 
             display_title = clean_title or "Recipe idea"
-            embed = discord.Embed(
-                title=display_title,
-                color=discord.Color.blurple(),
-                description=(
-                    "Saved as a recipe idea. Extraction is only available for YouTube links right now.\n"
-                    f"**Snapshot:** Captured {discord.utils.format_dt(discord.utils.utcnow(), style='f')}"
-                ),
+            payload = _manual_recipe_payload(
+                display_title,
+                added_by=interaction.user.display_name,
+                url=clean_url,
+                notes=clean_notes,
             )
-            embed.timestamp = discord.utils.utcnow()
-            if clean_url:
-                embed.add_field(name="Source", value=clean_url, inline=False)
-            if clean_notes:
-                embed.add_field(name="Notes", value=EmbedFormatter.truncate(clean_notes), inline=False)
-            embed.add_field(name="Status", value="Needs review", inline=True)
-            embed.set_footer(text=f"Submitted by {interaction.user.display_name}")
+            add_result = await asyncio.to_thread(self.db.add_recipe, payload)
+            if not add_result.get("success"):
+                duplicate_id = add_result.get("duplicate_id")
+                if duplicate_id:
+                    await interaction.followup.send(
+                        embed=EmbedFormatter.format_info(
+                            "Already Saved",
+                            f"That source link is already saved as recipe `#{duplicate_id}`."
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+                await interaction.followup.send(
+                    embed=EmbedFormatter.format_error(
+                        f"Could not save recipe: {add_result.get('error', 'unknown error')[:120]}"
+                    ),
+                    ephemeral=True,
+                )
+                return
+
+            saved_recipe = await asyncio.to_thread(self.db.get_recipe, add_result["recipe_id"])
+            embed = _format_saved_recipe_embed(saved_recipe)
+            embed.add_field(
+                name="Saved",
+                value=f"Use `/recipe view {saved_recipe['recipe_id']}` to open it later.",
+                inline=False,
+            )
             await interaction.followup.send(embed=embed)
 
         except ValueError as exc:

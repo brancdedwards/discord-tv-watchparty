@@ -3,6 +3,7 @@ Database bridge for querying the review_analyzer database.
 Provides utilities to fetch series, episodes, genres, and aggregated data.
 """
 import psycopg2
+from psycopg2.extras import Json
 from psycopg2 import Error
 import logging
 from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
@@ -684,6 +685,256 @@ class DatabaseBridge:
         finally:
             if conn:
                 conn.close()
+
+    @staticmethod
+    def ensure_recipes_schema() -> bool:
+        """Create recipe storage tables if they do not exist."""
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS recipes (
+                        recipe_id SERIAL PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        source_url TEXT,
+                        source_type TEXT,
+                        source_video_id TEXT,
+                        source_title TEXT,
+                        channel TEXT,
+                        status TEXT NOT NULL DEFAULT 'idea_saved',
+                        confidence TEXT NOT NULL DEFAULT 'low',
+                        added_by TEXT,
+                        notes TEXT,
+                        source_description TEXT,
+                        source_links JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        ingredients JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        instructions JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        extraction_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        warnings JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        captured_at TIMESTAMPTZ,
+                        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_recipes_added_at
+                    ON recipes (added_at DESC)
+                """)
+                cur.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_recipes_title_lower
+                    ON recipes (LOWER(title))
+                """)
+                conn.commit()
+                return True
+        except Error as e:
+            logger.error(f"Error ensuring recipes schema: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def add_recipe(recipe: dict) -> dict:
+        """Add a recipe or recipe idea and return the saved row."""
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                source_url = recipe.get("source_url")
+                if source_url:
+                    cur.execute(
+                        "SELECT recipe_id FROM recipes WHERE source_url = %s ORDER BY added_at DESC LIMIT 1",
+                        (source_url,)
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        return {"success": False, "duplicate_id": existing[0]}
+
+                cur.execute("""
+                    INSERT INTO recipes (
+                        title, source_url, source_type, source_video_id, source_title,
+                        channel, status, confidence, added_by, notes, source_description,
+                        source_links, ingredients, instructions, tags, extraction_sources,
+                        warnings, captured_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s
+                    )
+                    RETURNING recipe_id
+                """, (
+                    recipe.get("title"),
+                    source_url,
+                    recipe.get("source_type"),
+                    recipe.get("source_video_id"),
+                    recipe.get("source_title"),
+                    recipe.get("channel"),
+                    recipe.get("status", "idea_saved"),
+                    recipe.get("confidence", "low"),
+                    recipe.get("added_by"),
+                    recipe.get("notes"),
+                    recipe.get("source_description"),
+                    Json(recipe.get("source_links", [])),
+                    Json(recipe.get("ingredients", [])),
+                    Json(recipe.get("instructions", [])),
+                    Json(recipe.get("tags", [])),
+                    Json(recipe.get("extraction_sources", [])),
+                    Json(recipe.get("warnings", [])),
+                    recipe.get("captured_at")
+                ))
+                recipe_id = cur.fetchone()[0]
+                conn.commit()
+                return {"success": True, "recipe_id": recipe_id}
+        except Error as e:
+            logger.error(f"Error adding recipe: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def get_recipes(limit: int = 10, offset: int = 0, query: str = None) -> tuple:
+        """Return (total_count, recipes) for the saved recipe list."""
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                params = []
+                where = ""
+                if query:
+                    where = """
+                        WHERE LOWER(title) LIKE LOWER(%s)
+                           OR LOWER(COALESCE(notes, '')) LIKE LOWER(%s)
+                           OR LOWER(COALESCE(source_title, '')) LIKE LOWER(%s)
+                    """
+                    like = f"%{query}%"
+                    params.extend([like, like, like])
+
+                cur.execute(f"SELECT COUNT(*) FROM recipes {where}", params)
+                total = cur.fetchone()[0]
+
+                cur.execute(f"""
+                    SELECT recipe_id, title, source_url, source_type, source_title,
+                           channel, status, confidence, added_by, notes,
+                           source_description, source_links, ingredients, instructions,
+                           tags, extraction_sources, warnings, captured_at, added_at, updated_at
+                    FROM recipes
+                    {where}
+                    ORDER BY added_at DESC
+                    LIMIT %s OFFSET %s
+                """, params + [limit, offset])
+                return total, [DatabaseBridge._recipe_row_to_dict(row) for row in cur.fetchall()]
+        except Error as e:
+            logger.error(f"Error fetching recipes: {e}")
+            return 0, []
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def get_recipe(recipe_id: int) -> dict:
+        """Get one saved recipe by ID."""
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT recipe_id, title, source_url, source_type, source_title,
+                           channel, status, confidence, added_by, notes,
+                           source_description, source_links, ingredients, instructions,
+                           tags, extraction_sources, warnings, captured_at, added_at, updated_at
+                    FROM recipes
+                    WHERE recipe_id = %s
+                """, (recipe_id,))
+                row = cur.fetchone()
+                return DatabaseBridge._recipe_row_to_dict(row) if row else None
+        except Error as e:
+            logger.error(f"Error fetching recipe {recipe_id}: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def update_recipe(recipe_id: int, title: str = None, notes: str = None, status: str = None) -> bool:
+        """Update basic editable recipe fields."""
+        updates = []
+        params = []
+        if title:
+            updates.append("title = %s")
+            params.append(title)
+        if notes is not None:
+            updates.append("notes = %s")
+            params.append(notes)
+        if status:
+            updates.append("status = %s")
+            params.append(status)
+        if not updates:
+            return False
+
+        updates.append("updated_at = NOW()")
+        params.append(recipe_id)
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                cur.execute(f"UPDATE recipes SET {', '.join(updates)} WHERE recipe_id = %s", params)
+                conn.commit()
+                return cur.rowcount > 0
+        except Error as e:
+            logger.error(f"Error updating recipe {recipe_id}: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def remove_recipe(recipe_id: int) -> bool:
+        """Remove a saved recipe."""
+        conn = None
+        try:
+            conn = DatabaseBridge.get_connection()
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM recipes WHERE recipe_id = %s", (recipe_id,))
+                conn.commit()
+                return cur.rowcount > 0
+        except Error as e:
+            logger.error(f"Error removing recipe {recipe_id}: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
+
+    @staticmethod
+    def _recipe_row_to_dict(row) -> dict:
+        if not row:
+            return None
+        return {
+            "recipe_id": row[0],
+            "title": row[1],
+            "source_url": row[2],
+            "source_type": row[3],
+            "source_title": row[4],
+            "channel": row[5],
+            "status": row[6],
+            "confidence": row[7],
+            "added_by": row[8],
+            "notes": row[9],
+            "source_description": row[10],
+            "source_links": row[11] or [],
+            "ingredients": row[12] or [],
+            "instructions": row[13] or [],
+            "tags": row[14] or [],
+            "extraction_sources": row[15] or [],
+            "warnings": row[16] or [],
+            "captured_at": row[17],
+            "added_at": row[18],
+            "updated_at": row[19]
+        }
 
     @staticmethod
     def close_connection(conn):
