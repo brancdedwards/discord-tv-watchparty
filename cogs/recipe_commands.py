@@ -435,9 +435,18 @@ class RecipeCommandsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = DatabaseBridge()
+        self._recipes_schema_ready = False
         self.bot.add_view(RecipePanelView(self))
-        if not self.db.ensure_recipes_schema():
+
+    async def ensure_recipes_ready(self) -> bool:
+        """Ensure recipe persistence exists without blocking interaction ACKs."""
+        if self._recipes_schema_ready:
+            return True
+        ready = await asyncio.to_thread(self.db.ensure_recipes_schema)
+        self._recipes_schema_ready = ready
+        if not ready:
             logger.warning("Recipe schema was not created; recipe persistence may fail")
+        return ready
 
     @staticmethod
     def create_panel_embed() -> discord.Embed:
@@ -462,12 +471,15 @@ class RecipeCommandsCog(commands.Cog):
     @app_commands.describe(pin="Try to pin the panel after posting it")
     async def recipe_panel(self, interaction: discord.Interaction, pin: bool = True):
         """Post a persistent button panel for the recipe channel."""
-        await interaction.response.defer()
-        message = await interaction.followup.send(
-            embed=self.create_panel_embed(),
-            view=RecipePanelView(self),
-            wait=True,
-        )
+        try:
+            await interaction.response.send_message(
+                embed=self.create_panel_embed(),
+                view=RecipePanelView(self),
+            )
+            message = await interaction.original_response()
+        except discord.NotFound:
+            logger.warning("Recipe panel interaction expired before response")
+            return
 
         if pin:
             try:
@@ -506,6 +518,12 @@ class RecipeCommandsCog(commands.Cog):
         query: str | None = None,
         ephemeral: bool = False,
     ):
+        if not await self.ensure_recipes_ready():
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                ephemeral=True,
+            )
+            return
         page = max(page, 1)
         limit = 10
         offset = (page - 1) * limit
@@ -537,6 +555,12 @@ class RecipeCommandsCog(commands.Cog):
     @app_commands.describe(recipe_id="Recipe ID from /recipe list")
     async def view_recipe(self, interaction: discord.Interaction, recipe_id: int):
         await interaction.response.defer(thinking=True)
+        if not await self.ensure_recipes_ready():
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                ephemeral=True,
+            )
+            return
         recipe = await asyncio.to_thread(self.db.get_recipe, recipe_id)
         if not recipe:
             await interaction.followup.send(
@@ -572,6 +596,12 @@ class RecipeCommandsCog(commands.Cog):
         status: app_commands.Choice[str] | None = None,
     ):
         await interaction.response.defer(thinking=True)
+        if not await self.ensure_recipes_ready():
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                ephemeral=True,
+            )
+            return
         clean_title = title.strip() if title else None
         clean_notes = notes.strip() if notes is not None else None
         status_value = status.value if status else None
@@ -609,6 +639,12 @@ class RecipeCommandsCog(commands.Cog):
     @app_commands.describe(recipe_id="Recipe ID from /recipe list")
     async def remove_recipe(self, interaction: discord.Interaction, recipe_id: int):
         await interaction.response.defer(thinking=True)
+        if not await self.ensure_recipes_ready():
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                ephemeral=True,
+            )
+            return
         removed = await asyncio.to_thread(self.db.remove_recipe, recipe_id)
         if not removed:
             await interaction.followup.send(
@@ -647,6 +683,13 @@ class RecipeCommandsCog(commands.Cog):
             return
 
         try:
+            if not await self.ensure_recipes_ready():
+                await interaction.followup.send(
+                    embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                    ephemeral=True,
+                )
+                return
+
             if clean_url and _is_youtube_url(clean_url):
                 extraction = await asyncio.to_thread(
                     extract_youtube_recipe,
