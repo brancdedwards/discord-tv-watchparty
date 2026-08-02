@@ -420,7 +420,11 @@ class RecipePanelView(discord.ui.View):
         custom_id="recipe_panel:list_recipes",
     )
     async def list_recipes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.NotFound:
+            logger.warning("Recipe list interaction expired before it could be deferred")
+            return
         await self.cog.show_recipe_list(interaction, page=1, ephemeral=True)
 
 
