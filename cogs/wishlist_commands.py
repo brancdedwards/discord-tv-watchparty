@@ -1179,7 +1179,7 @@ class WishlistCommandsCog(commands.Cog):
 
             # Multiple matches - show selection
             embed = discord.Embed(
-                title=f"Which one to remove?",
+                title=f"Which one would you like to remove?",
                 color=discord.Color.red(),
                 description="Multiple matches found"
             )
