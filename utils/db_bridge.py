@@ -797,7 +797,7 @@ class DatabaseBridge:
                 conn.close()
 
     @staticmethod
-    def get_recipes(limit: int = 10, offset: int = 0, query: str = None) -> tuple:
+    def get_recipes(limit: int = 10, offset: int = 0, query: str = None, sort: str = "newest") -> tuple:
         """Return (total_count, recipes) for the saved recipe list."""
         conn = None
         try:
@@ -816,6 +816,13 @@ class DatabaseBridge:
 
                 cur.execute(f"SELECT COUNT(*) FROM recipes {where}", params)
                 total = cur.fetchone()[0]
+                order_by = {
+                    "newest": "added_at DESC",
+                    "oldest": "added_at ASC",
+                    "title_asc": "LOWER(title) ASC, added_at DESC",
+                    "title_desc": "LOWER(title) DESC, added_at DESC",
+                    "updated": "updated_at DESC",
+                }.get(sort, "added_at DESC")
 
                 cur.execute(f"""
                     SELECT recipe_id, title, source_url, source_type, source_title,
@@ -824,7 +831,7 @@ class DatabaseBridge:
                            tags, extraction_sources, warnings, captured_at, added_at, updated_at
                     FROM recipes
                     {where}
-                    ORDER BY added_at DESC
+                    ORDER BY {order_by}
                     LIMIT %s OFFSET %s
                 """, params + [limit, offset])
                 return total, [DatabaseBridge._recipe_row_to_dict(row) for row in cur.fetchall()]
