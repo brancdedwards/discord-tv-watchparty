@@ -91,7 +91,7 @@ def _format_recipe_extraction_embed(extraction, submitted_by) -> discord.Embed:
     status_labels = {
         "complete_recipe": "Complete recipe",
         "partial_recipe": "Partial recipe",
-        "video_only": "Video idea",
+        "video_only": "Video/recipe idea",
         "inspiration_only": "Idea saved",
         "not_recipe": "Not a recipe",
     }
@@ -353,6 +353,95 @@ def _format_recipe_list_embed(recipes: list, total: int, page: int, query: str |
     return embed
 
 
+class RecipeListView(discord.ui.View):
+    """Interactive recipe list with detail selection and pagination."""
+
+    def __init__(
+        self,
+        cog: "RecipeCommandsCog",
+        recipes: list,
+        page: int,
+        total_pages: int,
+        query: str | None = None,
+        ephemeral: bool = False,
+    ):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.recipes = recipes
+        self.page = page
+        self.total_pages = total_pages
+        self.query = query
+        self.ephemeral = ephemeral
+
+        if recipes:
+            select = discord.ui.Select(
+                placeholder="Open recipe details",
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label=recipe["title"][:100],
+                        value=str(recipe["recipe_id"]),
+                        description=f"#{recipe['recipe_id']} • {_recipe_status_label(recipe.get('status'))}"[:100],
+                    )
+                    for recipe in recipes[:25]
+                ],
+            )
+            select.callback = self._select_recipe
+            self.add_item(select)
+
+        if page > 1:
+            back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary, row=1)
+            back_button.callback = self._back
+            self.add_item(back_button)
+
+        if page < total_pages:
+            next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, row=1)
+            next_button.callback = self._next
+            self.add_item(next_button)
+
+    async def _select_recipe(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=self.ephemeral, thinking=True)
+        except discord.NotFound:
+            logger.warning("Recipe detail selection expired before it could be deferred")
+            return
+
+        recipe_id = int(interaction.data["values"][0])
+        recipe = await asyncio.to_thread(self.cog.db.get_recipe, recipe_id)
+        if not recipe:
+            await interaction.followup.send(
+                embed=EmbedFormatter.format_error(f"No saved recipe found for ID `{recipe_id}`."),
+                ephemeral=True,
+            )
+            return
+
+        await interaction.followup.send(
+            embed=_format_saved_recipe_embed(recipe),
+            ephemeral=self.ephemeral,
+        )
+
+    async def _back(self, interaction: discord.Interaction):
+        await self._change_page(interaction, self.page - 1)
+
+    async def _next(self, interaction: discord.Interaction):
+        await self._change_page(interaction, self.page + 1)
+
+    async def _change_page(self, interaction: discord.Interaction, page: int):
+        try:
+            await interaction.response.defer()
+        except discord.NotFound:
+            logger.warning("Recipe pagination interaction expired before it could be deferred")
+            return
+
+        await self.cog.update_recipe_list_message(
+            interaction,
+            page=page,
+            query=self.query,
+            ephemeral=self.ephemeral,
+        )
+
+
 class AddRecipeModal(discord.ui.Modal, title="Add a recipe"):
     """Modal opened by the pinned recipe panel."""
 
@@ -575,8 +664,57 @@ class RecipeCommandsCog(commands.Cog):
         limit = 10
         offset = (page - 1) * limit
         total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, query)
+        total_pages = max(1, (total + limit - 1) // limit)
+        if page > total_pages:
+            page = total_pages
+            offset = (page - 1) * limit
+            total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, query)
         embed = _format_recipe_list_embed(recipes, total, page, query=query)
-        await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+        view = RecipeListView(
+            self,
+            recipes,
+            page=page,
+            total_pages=total_pages,
+            query=query,
+            ephemeral=ephemeral,
+        )
+        await interaction.followup.send(embed=embed, view=view, ephemeral=ephemeral)
+
+    async def update_recipe_list_message(
+        self,
+        interaction: discord.Interaction,
+        page: int = 1,
+        query: str | None = None,
+        ephemeral: bool = False,
+    ):
+        """Update an existing recipe list message after a pagination interaction."""
+        if not await self.ensure_recipes_ready():
+            await interaction.edit_original_response(
+                embed=EmbedFormatter.format_error("Recipe storage is unavailable right now."),
+                view=None,
+            )
+            return
+
+        page = max(page, 1)
+        limit = 10
+        offset = (page - 1) * limit
+        total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, query)
+        total_pages = max(1, (total + limit - 1) // limit)
+        if page > total_pages:
+            page = total_pages
+            offset = (page - 1) * limit
+            total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, query)
+
+        embed = _format_recipe_list_embed(recipes, total, page, query=query)
+        view = RecipeListView(
+            self,
+            recipes,
+            page=page,
+            total_pages=total_pages,
+            query=query,
+            ephemeral=ephemeral,
+        )
+        await interaction.edit_original_response(embed=embed, view=view)
 
     @recipe.command(
         name="list",
