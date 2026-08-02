@@ -45,3 +45,8 @@ USERS = {
 
 # ===== Logging =====
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# ===== Health Check Server =====
+HEALTH_HOST = os.getenv("HEALTH_HOST", "0.0.0.0")
+HEALTH_PORT = int(os.getenv("PORT", os.getenv("HEALTH_PORT", 8080)))
+HEALTH_ALLOW_PORT_FALLBACK = os.getenv("HEALTH_ALLOW_PORT_FALLBACK", "true").lower() == "true"

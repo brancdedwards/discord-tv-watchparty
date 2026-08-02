@@ -16,7 +16,10 @@ from config import (
     DB_PORT,
     DB_NAME,
     DB_USER,
-    REVIEW_ANALYZER_PATH
+    REVIEW_ANALYZER_PATH,
+    HEALTH_HOST,
+    HEALTH_PORT,
+    HEALTH_ALLOW_PORT_FALLBACK
 )
 
 # ===== Logging Setup =====
@@ -38,6 +41,7 @@ class LivingRoomBot(commands.Bot):
         self.start_time = time.time()
         self.health_check_failures = 0
         self.http_server = None
+        self.http_site = None
         self.test_channel_id = None  # Will be set on_ready
         logger.info("The Living Room Bot initialized")
 
@@ -58,6 +62,7 @@ class LivingRoomBot(commands.Bot):
         logger.info(f"  Review analyzer path: {review_path}")
         logger.info(f"  Review analyzer present: {review_path.exists()}")
         logger.info(f"  Command prefix: {COMMAND_PREFIX}")
+        logger.info(f"  Health server: {HEALTH_HOST}:{HEALTH_PORT}")
 
     async def setup_hook(self):
         """Called before bot connects. Load all cogs."""
@@ -67,6 +72,7 @@ class LivingRoomBot(commands.Bot):
             "cogs.tv_commands",
             "cogs.movie_commands",
             "cogs.wishlist_commands",
+            "cogs.recipe_commands",
             "cogs.utilities"
         ]
 
@@ -83,11 +89,7 @@ class LivingRoomBot(commands.Bot):
 
         # Start HTTP health check server
         if not self.http_server:
-            self.http_server = web.AppRunner(self._create_health_app())
-            await self.http_server.setup()
-            site = web.TCPSite(self.http_server, '0.0.0.0', 8080)
-            await site.start()
-            logger.info("✅ Health check endpoint running on port 8080")
+            await self._start_health_server()
 
         # Start periodic health monitor
         if not self.periodic_health_check.is_running():
@@ -109,6 +111,31 @@ class LivingRoomBot(commands.Bot):
         app = web.Application()
         app.router.add_get('/health', self._health_endpoint)
         return app
+
+    async def _start_health_server(self):
+        """Start the HTTP health endpoint without blocking bot startup."""
+        app_runner = web.AppRunner(self._create_health_app())
+        await app_runner.setup()
+
+        ports_to_try = [HEALTH_PORT]
+        if HEALTH_ALLOW_PORT_FALLBACK and HEALTH_PORT != 0:
+            ports_to_try.append(0)
+
+        for port in ports_to_try:
+            try:
+                site = web.TCPSite(app_runner, HEALTH_HOST, port)
+                await site.start()
+                sockets = getattr(site, "_server", None).sockets if getattr(site, "_server", None) else []
+                actual_port = sockets[0].getsockname()[1] if sockets else port
+                self.http_server = app_runner
+                self.http_site = site
+                logger.info(f"✅ Health check endpoint running on {HEALTH_HOST}:{actual_port}")
+                return
+            except OSError as e:
+                logger.warning(f"Health server could not bind {HEALTH_HOST}:{port}: {e}")
+
+        await app_runner.cleanup()
+        logger.warning("Health check endpoint disabled; bot will continue without local HTTP health server")
 
     async def _health_endpoint(self, request):
         """Health check endpoint for Render."""
