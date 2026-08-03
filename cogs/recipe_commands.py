@@ -249,6 +249,10 @@ def _recipe_sort_label(sort: str) -> str:
     return labels.get(sort, labels["newest"])
 
 
+def _display_index(page: int, position: int, page_size: int = 10) -> int:
+    return ((max(page, 1) - 1) * page_size) + position + 1
+
+
 def _recipe_from_extraction(extraction, added_by: str, notes: str | None = None) -> dict:
     return {
         "title": extraction.recipe_title or extraction.title or "Recipe idea",
@@ -341,7 +345,7 @@ def _format_recipe_list_embed(
     total: int,
     page: int,
     query: str | None = None,
-    sort: str = "newest",
+    sort: str = "oldest",
 ) -> discord.Embed:
     title = "Saved Recipes" if not query else f"Recipe Search: {query}"
     embed = discord.Embed(
@@ -353,9 +357,9 @@ def _format_recipe_list_embed(
         embed.description = "No recipes found yet."
         return embed
 
-    for recipe in recipes:
+    for index, recipe in enumerate(recipes):
         bits = [
-            f"`#{recipe['recipe_id']}`",
+            f"`{_display_index(page, index)}`",
             _recipe_status_label(recipe.get("status")),
         ]
         if recipe.get("ingredients"):
@@ -380,7 +384,7 @@ class RecipeListView(discord.ui.View):
         page: int,
         total_pages: int,
         query: str | None = None,
-        sort: str = "newest",
+        sort: str = "oldest",
         ephemeral: bool = False,
     ):
         super().__init__(timeout=300)
@@ -397,8 +401,8 @@ class RecipeListView(discord.ui.View):
             min_values=1,
             max_values=1,
             options=[
-                discord.SelectOption(label="Newest first", value="newest", default=sort == "newest"),
                 discord.SelectOption(label="Oldest first", value="oldest", default=sort == "oldest"),
+                discord.SelectOption(label="Newest first", value="newest", default=sort == "newest"),
                 discord.SelectOption(label="Title A-Z", value="title_asc", default=sort == "title_asc"),
                 discord.SelectOption(label="Title Z-A", value="title_desc", default=sort == "title_desc"),
                 discord.SelectOption(label="Recently updated", value="updated", default=sort == "updated"),
@@ -417,9 +421,9 @@ class RecipeListView(discord.ui.View):
                     discord.SelectOption(
                         label=recipe["title"][:100],
                         value=str(recipe["recipe_id"]),
-                        description=f"#{recipe['recipe_id']} • {_recipe_status_label(recipe.get('status'))}"[:100],
+                        description=f"{_display_index(page, index)} • {_recipe_status_label(recipe.get('status'))}"[:100],
                     )
-                    for recipe in recipes[:25]
+                    for index, recipe in enumerate(recipes[:25])
                 ],
                 row=1,
             )
@@ -492,6 +496,77 @@ class RecipeListView(discord.ui.View):
             sort=self.sort,
             ephemeral=self.ephemeral,
         )
+
+
+class RecipeRemoveView(discord.ui.View):
+    """Select-based recipe removal list."""
+
+    def __init__(
+        self,
+        cog: "RecipeCommandsCog",
+        recipes: list,
+        page: int,
+        total_pages: int,
+        sort: str = "oldest",
+    ):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.recipes = recipes
+        self.page = page
+        self.total_pages = total_pages
+        self.sort = sort
+
+        if recipes:
+            select = discord.ui.Select(
+                placeholder="Choose a recipe to remove",
+                min_values=1,
+                max_values=1,
+                options=[
+                    discord.SelectOption(
+                        label=recipe["title"][:100],
+                        value=str(recipe["recipe_id"]),
+                        description=f"{_display_index(page, index)} • {_recipe_status_label(recipe.get('status'))}"[:100],
+                    )
+                    for index, recipe in enumerate(recipes[:25])
+                ],
+            )
+            select.callback = self._remove_selected
+            self.add_item(select)
+
+        if page > 1:
+            back_button = discord.ui.Button(label="Back", style=discord.ButtonStyle.secondary, row=1)
+            back_button.callback = self._back
+            self.add_item(back_button)
+
+        if page < total_pages:
+            next_button = discord.ui.Button(label="Next", style=discord.ButtonStyle.secondary, row=1)
+            next_button.callback = self._next
+            self.add_item(next_button)
+
+    async def _remove_selected(self, interaction: discord.Interaction):
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.NotFound:
+            logger.warning("Recipe remove selection expired before it could be deferred")
+            return
+
+        recipe_id = int(interaction.data["values"][0])
+        await self.cog.remove_recipe_by_id(interaction, recipe_id, ephemeral=True)
+
+    async def _back(self, interaction: discord.Interaction):
+        await self._change_page(interaction, self.page - 1)
+
+    async def _next(self, interaction: discord.Interaction):
+        await self._change_page(interaction, self.page + 1)
+
+    async def _change_page(self, interaction: discord.Interaction, page: int):
+        try:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        except discord.NotFound:
+            logger.warning("Recipe remove pagination expired before it could be deferred")
+            return
+
+        await self.cog.show_recipe_remove_list(interaction, page=page, sort=self.sort, edit=True)
 
 
 class AddRecipeModal(discord.ui.Modal, title="Add a recipe"):
@@ -607,9 +682,11 @@ class RecipePanelView(discord.ui.View):
     )
     async def remove_recipe_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
-            await interaction.response.send_modal(RemoveRecipeModal(self.cog))
+            await interaction.response.defer(ephemeral=True, thinking=True)
         except discord.NotFound:
-            logger.warning("Recipe remove interaction expired before modal could be opened")
+            logger.warning("Recipe remove interaction expired before it could be deferred")
+            return
+        await self.cog.show_recipe_remove_list(interaction, page=1)
 
 
 class RecipeCommandsCog(commands.Cog):
@@ -704,7 +781,7 @@ class RecipeCommandsCog(commands.Cog):
         interaction: discord.Interaction,
         page: int = 1,
         query: str | None = None,
-        sort: str = "newest",
+        sort: str = "oldest",
         ephemeral: bool = False,
     ):
         if not await self.ensure_recipes_ready():
@@ -739,7 +816,7 @@ class RecipeCommandsCog(commands.Cog):
         interaction: discord.Interaction,
         page: int = 1,
         query: str | None = None,
-        sort: str = "newest",
+        sort: str = "oldest",
         ephemeral: bool = False,
     ):
         """Update an existing recipe list message after a pagination interaction."""
@@ -772,6 +849,50 @@ class RecipeCommandsCog(commands.Cog):
         )
         await interaction.edit_original_response(embed=embed, view=view)
 
+    async def show_recipe_remove_list(
+        self,
+        interaction: discord.Interaction,
+        page: int = 1,
+        sort: str = "oldest",
+        edit: bool = False,
+    ):
+        """Show a selectable list of recipes to remove."""
+        if not await self.ensure_recipes_ready():
+            embed = EmbedFormatter.format_error("Recipe storage is unavailable right now.")
+            if edit:
+                await interaction.edit_original_response(embed=embed, view=None)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        page = max(page, 1)
+        limit = 10
+        offset = (page - 1) * limit
+        total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, None, sort)
+        total_pages = max(1, (total + limit - 1) // limit)
+        if page > total_pages:
+            page = total_pages
+            offset = (page - 1) * limit
+            total, recipes = await asyncio.to_thread(self.db.get_recipes, limit, offset, None, sort)
+
+        embed = discord.Embed(
+            title="Remove Recipe",
+            color=discord.Color.red(),
+            description=f"Choose a recipe to remove • Page {page} • {total} saved recipe{'s' if total != 1 else ''}",
+        )
+        for index, recipe in enumerate(recipes):
+            embed.add_field(
+                name=f"{_display_index(page, index)}. {recipe['title']}"[:256],
+                value=_recipe_status_label(recipe.get("status")),
+                inline=False,
+            )
+
+        view = RecipeRemoveView(self, recipes, page=page, total_pages=total_pages, sort=sort)
+        if edit:
+            await interaction.edit_original_response(embed=embed, view=view)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+
     @recipe.command(
         name="list",
         description="View saved recipes"
@@ -782,8 +903,8 @@ class RecipeCommandsCog(commands.Cog):
         sort="Sort order"
     )
     @app_commands.choices(sort=[
-        app_commands.Choice(name="Newest first", value="newest"),
         app_commands.Choice(name="Oldest first", value="oldest"),
+        app_commands.Choice(name="Newest first", value="newest"),
         app_commands.Choice(name="Title A-Z", value="title_asc"),
         app_commands.Choice(name="Title Z-A", value="title_desc"),
         app_commands.Choice(name="Recently updated", value="updated"),
@@ -800,7 +921,7 @@ class RecipeCommandsCog(commands.Cog):
             interaction,
             page=page,
             query=query,
-            sort=sort.value if sort else "newest",
+            sort=sort.value if sort else "oldest",
         )
 
     @recipe.command(
@@ -909,6 +1030,8 @@ class RecipeCommandsCog(commands.Cog):
                 ephemeral=True,
             )
             return
+        recipe = await asyncio.to_thread(self.db.get_recipe, recipe_id)
+        recipe_title = recipe["title"] if recipe else f"recipe #{recipe_id}"
         removed = await asyncio.to_thread(self.db.remove_recipe, recipe_id)
         if not removed:
             await interaction.followup.send(
@@ -917,7 +1040,7 @@ class RecipeCommandsCog(commands.Cog):
             )
             return
         await interaction.followup.send(
-            embed=EmbedFormatter.format_info("Recipe Removed", f"Removed recipe `#{recipe_id}`."),
+            embed=EmbedFormatter.format_info("Recipe Removed", f"Removed **{recipe_title}**."),
             ephemeral=ephemeral,
         )
 
