@@ -21,6 +21,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from utils.embed_formatter import EmbedFormatter
 from utils.db_bridge import DatabaseBridge
 from utils.youtube_recipe_extractor import extract_youtube_recipe
+from utils.recipe_site_extractor import extract_recipe_site
 
 
 def _is_youtube_url(url: str) -> bool:
@@ -35,6 +36,7 @@ def _format_source_labels(sources: list[str]) -> str:
         "watch_page_description": "YouTube watch page",
         "caption_transcript": "captions/transcript",
         "youtube_api_comments": "YouTube comments",
+        "schema_org_recipe": "recipe site data",
     }
     return ", ".join(labels.get(source, source.replace("_", " ")) for source in sources)
 
@@ -246,19 +248,24 @@ def _recipe_sort_label(sort: str) -> str:
         "title_desc": "Title Z-A",
         "updated": "Recently updated",
     }
-    return labels.get(sort, labels["newest"])
+    return labels.get(sort, labels["oldest"])
 
 
 def _display_index(page: int, position: int, page_size: int = 10) -> int:
     return ((max(page, 1) - 1) * page_size) + position + 1
 
 
-def _recipe_from_extraction(extraction, added_by: str, notes: str | None = None) -> dict:
+def _recipe_from_extraction(
+    extraction,
+    added_by: str,
+    notes: str | None = None,
+    source_type: str = "youtube",
+) -> dict:
     return {
         "title": extraction.recipe_title or extraction.title or "Recipe idea",
         "source_url": extraction.url,
-        "source_type": "youtube",
-        "source_video_id": extraction.video_id,
+        "source_type": source_type,
+        "source_video_id": getattr(extraction, "video_id", None),
         "source_title": extraction.title,
         "channel": extraction.channel,
         "status": extraction.recipe_status,
@@ -1111,6 +1118,54 @@ class RecipeCommandsCog(commands.Cog):
 
                 saved_recipe = await asyncio.to_thread(self.db.get_recipe, add_result["recipe_id"])
                 embed = _format_saved_recipe_embed(saved_recipe)
+                embed.add_field(
+                    name="Saved",
+                    value=f"Use `/recipe view {saved_recipe['recipe_id']}` to open it later.",
+                    inline=False,
+                )
+                await interaction.followup.send(embed=embed)
+                return
+
+            if clean_url and clean_url.lower().startswith(("http://", "https://")):
+                extraction = await asyncio.to_thread(
+                    extract_recipe_site,
+                    clean_url,
+                    recipe_title=clean_title,
+                )
+                payload = _recipe_from_extraction(
+                    extraction,
+                    added_by=interaction.user.display_name,
+                    notes=clean_notes,
+                    source_type="website",
+                )
+                add_result = await asyncio.to_thread(self.db.add_recipe, payload)
+                if not add_result.get("success"):
+                    duplicate_id = add_result.get("duplicate_id")
+                    if duplicate_id:
+                        await interaction.followup.send(
+                            embed=EmbedFormatter.format_info(
+                                "Already Saved",
+                                f"That source link is already saved as recipe `#{duplicate_id}`."
+                            ),
+                            ephemeral=True,
+                        )
+                        return
+                    await interaction.followup.send(
+                        embed=EmbedFormatter.format_error(
+                            f"Could not save recipe: {add_result.get('error', 'unknown error')[:120]}"
+                        ),
+                        ephemeral=True,
+                    )
+                    return
+
+                saved_recipe = await asyncio.to_thread(self.db.get_recipe, add_result["recipe_id"])
+                embed = _format_saved_recipe_embed(saved_recipe)
+                if extraction.warnings:
+                    embed.add_field(
+                        name="Extraction",
+                        value=EmbedFormatter.truncate("\n".join(extraction.warnings[:2])),
+                        inline=False,
+                    )
                 embed.add_field(
                     name="Saved",
                     value=f"Use `/recipe view {saved_recipe['recipe_id']}` to open it later.",
